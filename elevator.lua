@@ -2,9 +2,8 @@ local DIRECTION = "left"
 local SEQUENCER = "back"
 local CONTACT   = "right"
 
--- NUR FUER DEN TEST:
--- Wir starten auf Etage 3
-local currentFloor = 3
+-- Vorerst Startposition fuer den Test
+local currentFloor = 1
 
 local function pulse(side)
     redstone.setOutput(side, false)
@@ -17,24 +16,18 @@ local function pulse(side)
 end
 
 local function waitForNextFloor()
-
-    -- Erst aktuellen Contact verlassen
+    -- Aktuellen Contact erst verlassen
     while redstone.getInput(CONTACT) do
         sleep(0.05)
     end
 
-    print("Contact verlassen")
-
-    -- Dann auf naechsten Contact warten
+    -- Auf naechsten Contact warten
     while not redstone.getInput(CONTACT) do
         sleep(0.05)
     end
-
-    print("Neuer Contact erreicht")
 end
 
 local function moveTo(targetFloor)
-
     if targetFloor == currentFloor then
         print("Bereits auf Etage " .. currentFloor)
         return
@@ -50,11 +43,10 @@ local function moveTo(targetFloor)
         redstone.setOutput(DIRECTION, false)
     end
 
-    -- Sequenced Gearshift START
+    -- Aufzug starten
     pulse(SEQUENCER)
 
     while currentFloor ~= targetFloor do
-
         waitForNextFloor()
 
         if goingUp then
@@ -66,22 +58,38 @@ local function moveTo(targetFloor)
         print("Etage " .. currentFloor .. " erreicht")
     end
 
-    -- Sequenced Gearshift STOP
+    -- Aufzug stoppen
     pulse(SEQUENCER)
 
-    print("ZIEL ERREICHT: Etage " .. currentFloor)
+    print("Angekommen auf Etage " .. currentFloor)
 end
 
 
-print("=== AUFZUG TEST ===")
-print("Aktuelle Etage: " .. currentFloor)
+-- =========================
+-- HAUPTPROGRAMM
+-- =========================
 
-write("Ziel-Etage (1-3): ")
-local target = tonumber(read())
+while true do
+    term.clear()
+    term.setCursorPos(1, 1)
 
-if target == nil or target < 1 or target > 3 then
-    print("Ungueltige Etage")
-    return
+    print("=== AUFZUG ===")
+    print("")
+    print("Aktuelle Etage: " .. currentFloor)
+    print("")
+    write("Ziel (1-3): ")
+
+    local target = tonumber(read())
+
+    if target and target >= 1 and target <= 3 then
+        moveTo(target)
+
+        print("")
+        print("Enter fuer neue Fahrt...")
+        read()
+    else
+        print("")
+        print("Ungueltige Etage!")
+        sleep(1)
+    end
 end
-
-moveTo(target)
