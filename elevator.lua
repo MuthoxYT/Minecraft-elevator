@@ -650,83 +650,72 @@ local function calibrate()
     sleep(0.5)
 
 
-    -- --------------------------------------------------------
-    -- SCHRITT 2: GANZ NACH UNTEN FAHREN
-    -- UND ETAGEN ZAEHLEN
-    -- --------------------------------------------------------
+-- --------------------------------------------------------
+-- SCHRITT 2: GANZ NACH UNTEN FAHREN
+-- UND ETAGEN ZAEHLEN
+-- --------------------------------------------------------
 
-    local countedFloors = 0
+local countedFloors = 0
 
-    redstone.setOutput(
-        DIRECTION,
-        false
-    )
+redstone.setOutput(DIRECTION, false)
+pulse(SEQUENCER)
 
-    pulse(SEQUENCER)
+-- Home zuerst verlassen
+while redstone.getInput(HOME) do
+    sleep(0.05)
+end
 
+while true do
 
-    -- Erst Home verlassen
-    while redstone.getInput(HOME) do
+    -- Warten auf normalen Contact ODER Bottom
+    while
+        not redstone.getInput(CONTACT)
+        and not redstone.getInput(BOTTOM)
+    do
         sleep(0.05)
     end
 
+    -- ========================================
+    -- BOTTOM = LETZTE ETAGE
+    -- ========================================
 
-    -- Solange fahren, bis Bottom aktiv wird.
-    while not redstone.getInput(BOTTOM) do
+    if redstone.getInput(BOTTOM) then
 
-        -- Auf naechsten normalen Contact warten
-        while
-            not redstone.getInput(CONTACT)
-            and not redstone.getInput(BOTTOM)
-        do
-            sleep(0.05)
-        end
-
-
-        -- Falls Bottom zuerst kam:
-        if redstone.getInput(BOTTOM) then
-            break
-        end
-
-
-        -- Normale Etage gefunden
-        countedFloors =
-            countedFloors + 1
-
-        currentFloor =
-            countedFloors
+        countedFloors = countedFloors + 1
+        currentFloor = countedFloors
 
         drawScreen()
 
-
-        -- Contact wieder verlassen,
-        -- bevor der naechste gezaehlt wird.
-        while
-            redstone.getInput(CONTACT)
-            and not redstone.getInput(BOTTOM)
-        do
-            sleep(0.05)
-        end
+        break
     end
 
+    -- ========================================
+    -- NORMALER CONTACT
+    -- ========================================
 
-    -- --------------------------------------------------------
-    -- BOTTOM ERREICHT -> STOP
-    -- --------------------------------------------------------
-
-    pulse(SEQUENCER)
-
-
-    -- Der unterste normale Contact muss
-    -- vor dem Bottom-Sensor liegen bzw.
-    -- bereits gezaehlt worden sein.
-    maxFloor = countedFloors
-
-    saveConfig()
+    countedFloors = countedFloors + 1
+    currentFloor = countedFloors
 
     drawScreen()
 
-    sleep(0.75)
+    -- Diesen Contact komplett verlassen,
+    -- bevor weitergezaehlt werden darf.
+    while redstone.getInput(CONTACT) do
+        sleep(0.05)
+    end
+end
+
+
+-- Bottom erreicht -> STOP
+pulse(SEQUENCER)
+
+maxFloor = countedFloors
+
+saveConfig()
+
+drawScreen()
+
+sleep(0.75)
 
 
     -- --------------------------------------------------------
