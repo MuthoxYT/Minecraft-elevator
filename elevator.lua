@@ -1,11 +1,12 @@
 -- ============================================
 -- CREATE + CC:TWEAKED ELEVATOR
--- Testaufbau: Etagen 0 - 2
 --
 -- LEFT  = Richtungs-Gearshift
 -- BACK  = Sequenced Gearshift
--- RIGHT = normale Etagen-Contacts (1, 2)
--- TOP   = Home-Contact / Etage 0
+-- RIGHT = normale Etagen-Contacts
+-- TOP   = Home / Etage 0
+--
+-- Monitor wird automatisch erkannt.
 -- ============================================
 
 local DIRECTION = "left"
@@ -16,13 +17,36 @@ local HOME      = "top"
 local MIN_FLOOR = 0
 local MAX_FLOOR = 2
 
--- Beim Start ist die Position unbekannt.
 local currentFloor = nil
+local moving = false
+local targetFloor = nil
+
+-- Monitor automatisch finden
+local monitor = peripheral.find("monitor")
+
+if not monitor then
+    error("Kein Monitor gefunden!")
+end
+
+monitor.setTextScale(0.5)
+
+local WIDTH, HEIGHT = monitor.getSize()
+
+-- Hier speichern wir die Positionen der Buttons
+local buttons = {}
 
 
 -- ============================================
--- REDSTONE-PULS
+-- HILFSFUNKTIONEN
 -- ============================================
+
+local function centerText(y, text)
+    local x = math.floor((WIDTH - #text) / 2) + 1
+
+    monitor.setCursorPos(x, y)
+    monitor.write(text)
+end
+
 
 local function pulse(side)
     redstone.setOutput(side, false)
@@ -36,19 +60,186 @@ end
 
 
 -- ============================================
--- AUF NAECHSTE NORMALE ETAGE WARTEN
+-- MONITOR ZEICHNEN
+-- ============================================
+
+local function drawScreen()
+
+    WIDTH, HEIGHT = monitor.getSize()
+
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.clear()
+
+    buttons = {}
+
+    -- Titel
+    monitor.setBackgroundColor(colors.gray)
+    monitor.setTextColor(colors.white)
+
+    monitor.setCursorPos(1, 1)
+    monitor.clearLine()
+
+    centerText(1, "AUFZUG")
+
+
+    -- Aktuelle Etage
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.lightGray)
+
+    centerText(3, "AKTUELLE ETAGE")
+
+    monitor.setTextColor(colors.white)
+
+    if currentFloor ~= nil then
+        centerText(4, tostring(currentFloor))
+    else
+        centerText(4, "?")
+    end
+
+
+    -- Status
+    if moving then
+        monitor.setTextColor(colors.orange)
+
+        centerText(
+            6,
+            "FAHRE ZU " .. tostring(targetFloor)
+        )
+    else
+        monitor.setTextColor(colors.lime)
+        centerText(6, "BEREIT")
+    end
+
+
+    -- ========================================
+    -- ETAGEN-BUTTONS
+    -- ========================================
+
+    local floorCount = MAX_FLOOR - MIN_FLOOR + 1
+
+    local buttonWidth = 7
+    local buttonHeight = 3
+    local gap = 2
+
+    -- Anzahl Buttons pro Reihe automatisch
+    local columns = math.floor(
+        (WIDTH + gap) /
+        (buttonWidth + gap)
+    )
+
+    if columns < 1 then
+        columns = 1
+    end
+
+    if columns > floorCount then
+        columns = floorCount
+    end
+
+    local rows = math.ceil(floorCount / columns)
+
+    local totalWidth =
+        columns * buttonWidth
+        + (columns - 1) * gap
+
+    local startX =
+        math.floor((WIDTH - totalWidth) / 2) + 1
+
+    local startY = 8
+
+    local index = 0
+
+    for floor = MIN_FLOOR, MAX_FLOOR do
+
+        local column = index % columns
+        local row = math.floor(index / columns)
+
+        local x1 =
+            startX
+            + column * (buttonWidth + gap)
+
+        local y1 =
+            startY
+            + row * (buttonHeight + 1)
+
+        local x2 = x1 + buttonWidth - 1
+        local y2 = y1 + buttonHeight - 1
+
+
+        -- Farbe bestimmen
+        local background = colors.gray
+        local foreground = colors.white
+
+        if floor == currentFloor then
+            background = colors.green
+
+        elseif moving then
+            background = colors.lightGray
+            foreground = colors.gray
+
+        elseif floor == targetFloor then
+            background = colors.orange
+        end
+
+
+        -- Button zeichnen
+        monitor.setBackgroundColor(background)
+        monitor.setTextColor(foreground)
+
+        for y = y1, y2 do
+            monitor.setCursorPos(x1, y)
+            monitor.write(
+                string.rep(" ", buttonWidth)
+            )
+        end
+
+        local label = tostring(floor)
+
+        local labelX =
+            x1
+            + math.floor(
+                (buttonWidth - #label) / 2
+            )
+
+        local labelY =
+            y1
+            + math.floor(buttonHeight / 2)
+
+        monitor.setCursorPos(labelX, labelY)
+        monitor.write(label)
+
+
+        -- Touch-Bereich speichern
+        buttons[#buttons + 1] = {
+            floor = floor,
+            x1 = x1,
+            y1 = y1,
+            x2 = x2,
+            y2 = y2
+        }
+
+        index = index + 1
+    end
+
+
+    -- Farben zuruecksetzen
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+end
+
+
+-- ============================================
+-- AUF NAECHSTE ETAGE WARTEN
 -- ============================================
 
 local function waitForNextFloor()
 
-    -- Falls wir momentan auf einem normalen
-    -- Contact stehen, diesen erst verlassen.
+    -- Alten Contact verlassen
     while redstone.getInput(CONTACT) do
         sleep(0.05)
     end
 
-    -- Danach auf den naechsten normalen
-    -- Etagen-Contact warten.
+    -- Neuen Contact erreichen
     while not redstone.getInput(CONTACT) do
         sleep(0.05)
     end
@@ -61,47 +252,44 @@ end
 
 local function home()
 
-    term.clear()
-    term.setCursorPos(1, 1)
+    moving = true
+    targetFloor = 0
 
-    print("=== HOMING ===")
-    print("")
+    drawScreen()
 
-    -- Falls wir schon auf Etage 0 stehen:
+    -- Bereits auf Home?
     if redstone.getInput(HOME) then
+
         currentFloor = 0
+        moving = false
+        targetFloor = nil
 
-        print("Home bereits erkannt.")
-        print("Aktuelle Etage: 0")
-
-        sleep(1)
+        drawScreen()
         return
     end
 
-    print("Position unbekannt.")
-    print("Fahre nach oben zu Home...")
 
-    -- TRUE = hoch
+    -- Hoch
     redstone.setOutput(DIRECTION, true)
 
-    -- Aufzug starten
+    -- Start
     pulse(SEQUENCER)
 
-    -- Auf separaten Home-Sensor warten
+
+    -- Auf Home warten
     while not redstone.getInput(HOME) do
         sleep(0.05)
     end
 
-    -- Home erreicht -> sofort stoppen
+
+    -- Stop
     pulse(SEQUENCER)
 
     currentFloor = 0
+    moving = false
+    targetFloor = nil
 
-    print("")
-    print("HOME erreicht!")
-    print("Aktuelle Etage: 0")
-
-    sleep(1)
+    drawScreen()
 end
 
 
@@ -109,47 +297,49 @@ end
 -- ZU ETAGE FAHREN
 -- ============================================
 
-local function moveTo(targetFloor)
+local function moveTo(target)
 
-    if targetFloor == currentFloor then
-        print("Bereits auf Etage " .. currentFloor)
+    if target == currentFloor then
         return
     end
 
-    local goingUp = targetFloor < currentFloor
+    moving = true
+    targetFloor = target
 
+    drawScreen()
+
+    local goingUp = target < currentFloor
+
+
+    -- Richtung setzen
     if goingUp then
-        print(
-            "Fahre HOCH: "
-            .. currentFloor
-            .. " -> "
-            .. targetFloor
-        )
 
         -- TRUE = hoch
-        redstone.setOutput(DIRECTION, true)
-
-    else
-        print(
-            "Fahre RUNTER: "
-            .. currentFloor
-            .. " -> "
-            .. targetFloor
+        redstone.setOutput(
+            DIRECTION,
+            true
         )
 
+    else
+
         -- FALSE = runter
-        redstone.setOutput(DIRECTION, false)
+        redstone.setOutput(
+            DIRECTION,
+            false
+        )
+
     end
 
-    -- Aufzug starten
+
+    -- Start
     pulse(SEQUENCER)
 
 
     -- ========================================
-    -- SONDERFALL: ZIEL = HOME / ETAGE 0
+    -- ZIEL = HOME / ETAGE 0
     -- ========================================
 
-    if targetFloor == 0 then
+    if target == 0 then
 
         while not redstone.getInput(HOME) do
             sleep(0.05)
@@ -159,41 +349,77 @@ local function moveTo(targetFloor)
 
         currentFloor = 0
 
-        print("Etage 0 erreicht")
+        moving = false
+        targetFloor = nil
+
+        drawScreen()
         return
     end
 
 
     -- ========================================
-    -- NORMALE ETAGEN 1 - 2
+    -- NORMALE ETAGEN
     -- ========================================
 
-    while currentFloor ~= targetFloor do
+    while currentFloor ~= target do
 
         waitForNextFloor()
 
         if goingUp then
-            currentFloor = currentFloor - 1
+            currentFloor =
+                currentFloor - 1
         else
-            currentFloor = currentFloor + 1
+            currentFloor =
+                currentFloor + 1
         end
 
-        print("Etage " .. currentFloor .. " erreicht")
+        -- Anzeige waehrend der Fahrt
+        -- aktualisieren
+        drawScreen()
     end
 
-    -- Ziel erreicht -> stoppen
+
+    -- Stop
     pulse(SEQUENCER)
 
-    print("Angekommen auf Etage " .. currentFloor)
+    moving = false
+    targetFloor = nil
+
+    drawScreen()
 end
 
 
 -- ============================================
--- PROGRAMMSTART
+-- TOUCH AUSWERTEN
 -- ============================================
 
--- Nach jedem Start zuerst Referenzfahrt.
+local function getTouchedFloor(x, y)
+
+    for _, button in ipairs(buttons) do
+
+        if
+            x >= button.x1
+            and x <= button.x2
+            and y >= button.y1
+            and y <= button.y2
+        then
+            return button.floor
+        end
+    end
+
+    return nil
+end
+
+
+-- ============================================
+-- START
+-- ============================================
+
+monitor.setTextScale(0.5)
+
 home()
+
+drawScreen()
 
 
 -- ============================================
@@ -202,38 +428,16 @@ home()
 
 while true do
 
-    term.clear()
-    term.setCursorPos(1, 1)
+    local event, side, x, y =
+        os.pullEvent("monitor_touch")
 
-    print("=== AUFZUG ===")
-    print("")
-    print("Aktuelle Etage: " .. currentFloor)
-    print("")
-    write(
-        "Ziel ("
-        .. MIN_FLOOR
-        .. "-"
-        .. MAX_FLOOR
-        .. "): "
-    )
+    if not moving then
 
-    local target = tonumber(read())
+        local selectedFloor =
+            getTouchedFloor(x, y)
 
-    if target
-        and target >= MIN_FLOOR
-        and target <= MAX_FLOOR
-        and target % 1 == 0 then
-
-        moveTo(target)
-
-        print("")
-        print("Enter fuer neue Fahrt...")
-        read()
-
-    else
-
-        print("")
-        print("Ungueltige Etage!")
-        sleep(1)
+        if selectedFloor ~= nil then
+            moveTo(selectedFloor)
+        end
     end
 end
