@@ -924,15 +924,129 @@ local function drawMain()
                         colors.gray
                 end
 
-                drawButton(
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    tostring(floor),
-                    background,
-                    foreground
+                -- Button-Hintergrund zeichnen
+fillArea(
+    x1,
+    y1,
+    x2,
+    y2,
+    background
+)
+
+monitor.setTextColor(
+    foreground
+)
+
+-- Etagenzahl
+local floorText =
+    tostring(floor)
+
+local floorX =
+    x1
+    + math.floor(
+        (
+            (x2 - x1 + 1)
+            - #floorText
+        ) / 2
+    )
+
+-- Etagenname
+local floorName =
+    getFloorName(floor)
+
+
+if buttonHeight >= 3
+    and floorName
+then
+
+    -- Zahl oben
+    monitor.setCursorPos(
+        floorX,
+        y1
+    )
+
+    monitor.write(
+        floorText
+    )
+
+
+    -- Maximal verfuegbare Breite
+    local maxNameLength =
+        x2 - x1 + 1
+
+
+    local displayName =
+        floorName
+
+
+    -- Zu lange Namen kuerzen
+    if #displayName
+        > maxNameLength
+    then
+
+        if maxNameLength >= 3 then
+
+            displayName =
+                string.sub(
+                    displayName,
+                    1,
+                    maxNameLength - 2
                 )
+                .. ".."
+
+        else
+
+            displayName =
+                string.sub(
+                    displayName,
+                    1,
+                    maxNameLength
+                )
+        end
+    end
+
+
+    local nameX =
+        x1
+        + math.floor(
+            (
+                maxNameLength
+                - #displayName
+            ) / 2
+        )
+
+
+    -- Name unten
+    monitor.setCursorPos(
+        nameX,
+        y2
+    )
+
+    monitor.write(
+        displayName
+    )
+
+else
+
+    -- Falls wegen sehr vielen Etagen
+    -- nur kleine Buttons moeglich sind:
+    -- nur die Nummer anzeigen.
+
+    local floorY =
+        y1
+        + math.floor(
+            (y2 - y1) / 2
+        )
+
+    monitor.setCursorPos(
+        floorX,
+        floorY
+    )
+
+    monitor.write(
+        floorText
+    )
+end
 
                 floorButtons[
                     #floorButtons + 1
