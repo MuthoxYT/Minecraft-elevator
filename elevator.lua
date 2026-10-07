@@ -1,51 +1,41 @@
 -- ============================================================
--- CREATE + CC:TWEAKED ELEVATOR CONTROLLER
--- ============================================================
---
--- COMPUTER:
--- left   = Richtungs-Gearshift
--- back   = Sequenced Gearshift
--- right  = normale Etagen-Contacts
--- top    = HOME / Etage 0
--- bottom = BOTTOM / letzte Etage
--- front  = Wired Modem
---
--- WIRED NETWORK:
--- monitor
--- redstone_relay_1 = Geschwindigkeit
---
--- DATEIEN:
--- elevator.cfg
--- floors.cfg
---
--- FEATURES:
--- - automatische Kalibrierung
--- - Etagen-Namen
--- - Geschwindigkeit 50-100 %
--- - HOME/BOTTOM Sicherheits-Endschalter
--- - automatische Rueckfahrt zu Etage 0
+-- ELEVATOR MAIN CONTROLLER
+-- Computer #0
 -- ============================================================
 
-
--- ============================================================
--- HARDWARE
--- ============================================================
-
+-- REDSTONE
 local DIRECTION = "left"
 local SEQUENCER = "back"
 local CONTACT   = "right"
 local HOME      = "top"
 local BOTTOM    = "bottom"
 
+-- WIRED NETWORK
+local NETWORK_SIDE = "front"
+
+-- SPEED
 local SPEED_RELAY_NAME = "redstone_relay_1"
 local SPEED_SIDE = "right"
 
-local CONFIG_FILE = "elevator.cfg"
-local FLOOR_FILE  = "floors.cfg"
+-- NETWORK
+local BRIDGE_ID = 1
+
+local PROTOCOL_STATE =
+    "elevator_state"
+
+local PROTOCOL_COMMAND =
+    "elevator_command"
+
+-- FILES
+local CONFIG_FILE =
+    "elevator.cfg"
+
+local FLOOR_FILE =
+    "floors.cfg"
 
 
 -- ============================================================
--- ZUSTAND
+-- STATE
 -- ============================================================
 
 local currentFloor = nil
@@ -57,77 +47,59 @@ local calibrating = false
 
 local normalSpeed = 70
 
--- main / settings / names
-local currentPage = "main"
+local currentPage =
+    "main"
 
 local floorNames = {}
 
-
--- ============================================================
--- AUTO HOME
--- ============================================================
-
 local autoHomeEnabled = false
 local autoHomeMinutes = 5
-
 local autoHomeTimer = nil
+
+local namingFloor = nil
 
 
 -- ============================================================
 -- PERIPHERALS
 -- ============================================================
 
-local monitor = peripheral.find("monitor")
-
-if not monitor then
-    error("Kein Advanced Monitor gefunden!")
-end
-
-
 local speedRelay =
-    peripheral.wrap(SPEED_RELAY_NAME)
+    peripheral.wrap(
+        SPEED_RELAY_NAME
+    )
 
 if not speedRelay then
     error(
-        "Redstone Relay '"
+        "Speed Relay "
         .. SPEED_RELAY_NAME
-        .. "' nicht gefunden!"
+        .. " nicht gefunden!"
     )
 end
 
 
-monitor.setTextScale(0.5)
+if peripheral.getType(
+    NETWORK_SIDE
+) ~= "modem" then
 
-local WIDTH, HEIGHT =
-    monitor.getSize()
+    error(
+        "Kein Wired Modem auf "
+        .. NETWORK_SIDE
+    )
+end
 
 
--- ============================================================
--- BUTTONS
--- ============================================================
-
-local floorButtons = {}
-local nameFloorButtons = {}
-
-local settingsButton = nil
-
-local speedMinusButton = nil
-local speedPlusButton = nil
-
-local autoHomeButton = nil
-local autoMinusButton = nil
-local autoPlusButton = nil
-
-local namesButton = nil
-local calibrationButton = nil
-local backButton = nil
+rednet.open(
+    NETWORK_SIDE
+)
 
 
 -- ============================================================
 -- SPEED
 -- ============================================================
 
-local function speedPercentToSignal(percent)
+local function speedPercentToSignal(
+    percent
+)
 
     percent =
         math.max(
@@ -138,8 +110,6 @@ local function speedPercentToSignal(percent)
             )
         )
 
-    -- 100 % -> 0
-    --  50 % -> 15
 
     local signal =
         math.floor(
@@ -147,6 +117,7 @@ local function speedPercentToSignal(percent)
             * 15
             + 0.5
         )
+
 
     return math.max(
         0,
@@ -162,7 +133,9 @@ local function setSpeed(percent)
 
     speedRelay.setAnalogOutput(
         SPEED_SIDE,
-        speedPercentToSignal(percent)
+        speedPercentToSignal(
+            percent
+        )
     )
 end
 
@@ -178,12 +151,14 @@ end
 
 
 -- ============================================================
--- CONFIG LADEN
+-- CONFIG
 -- ============================================================
 
 local function loadConfig()
 
-    if not fs.exists(CONFIG_FILE) then
+    if not fs.exists(
+        CONFIG_FILE
+    ) then
         return false
     end
 
@@ -194,18 +169,11 @@ local function loadConfig()
             "r"
         )
 
+
     if not file then
         return false
     end
 
-
-    -- Alte Config:
-    -- Zeile 1 = maxFloor
-    -- Zeile 2 = normalSpeed
-    --
-    -- Neue Config:
-    -- Zeile 3 = autoHomeEnabled
-    -- Zeile 4 = autoHomeMinutes
 
     local floorValue =
         file.readLine()
@@ -224,13 +192,19 @@ local function loadConfig()
 
 
     local loadedFloor =
-        tonumber(floorValue)
+        tonumber(
+            floorValue
+        )
 
     local loadedSpeed =
-        tonumber(speedValue)
+        tonumber(
+            speedValue
+        )
 
     local loadedMinutes =
-        tonumber(minutesValue)
+        tonumber(
+            minutesValue
+        )
 
 
     if loadedFloor
@@ -276,10 +250,6 @@ local function loadConfig()
 end
 
 
--- ============================================================
--- CONFIG SPEICHERN
--- ============================================================
-
 local function saveConfig()
 
     local file =
@@ -288,9 +258,10 @@ local function saveConfig()
             "w"
         )
 
+
     if not file then
         error(
-            "Konfiguration konnte nicht gespeichert werden!"
+            "Config konnte nicht gespeichert werden!"
         )
     end
 
@@ -311,11 +282,9 @@ local function saveConfig()
         tostring(normalSpeed)
     )
 
-
     file.writeLine(
         tostring(autoHomeEnabled)
     )
-
 
     file.writeLine(
         tostring(autoHomeMinutes)
@@ -327,7 +296,7 @@ end
 
 
 -- ============================================================
--- ETAGEN-NAMEN LADEN
+-- FLOOR NAMES
 -- ============================================================
 
 local function loadFloorNames()
@@ -335,7 +304,9 @@ local function loadFloorNames()
     floorNames = {}
 
 
-    if not fs.exists(FLOOR_FILE) then
+    if not fs.exists(
+        FLOOR_FILE
+    ) then
         return
     end
 
@@ -346,6 +317,7 @@ local function loadFloorNames()
             "r"
         )
 
+
     if not file then
         return
     end
@@ -355,6 +327,7 @@ local function loadFloorNames()
 
         local line =
             file.readLine()
+
 
         if not line then
             break
@@ -394,10 +367,6 @@ local function loadFloorNames()
 end
 
 
--- ============================================================
--- ETAGEN-NAMEN SPEICHERN
--- ============================================================
-
 local function saveFloorNames()
 
     local file =
@@ -406,9 +375,10 @@ local function saveFloorNames()
             "w"
         )
 
+
     if not file then
         error(
-            "Etagen-Namen konnten nicht gespeichert werden!"
+            "floors.cfg konnte nicht gespeichert werden!"
         )
     end
 
@@ -440,34 +410,72 @@ end
 
 
 -- ============================================================
--- ETAGENNAME
+-- STATE AN PANEL SENDEN
 -- ============================================================
 
-local function getFloorName(floor)
+local function sendState()
 
-    if floor == nil then
-        return nil
+    local names = {}
+
+
+    for floor, name
+        in pairs(
+            floorNames
+        )
+    do
+
+        names[floor] =
+            name
     end
 
 
-    local name =
-        floorNames[floor]
+    local state = {
+
+        page =
+            currentPage,
+
+        currentFloor =
+            currentFloor,
+
+        maxFloor =
+            maxFloor,
+
+        targetFloor =
+            targetFloor,
+
+        moving =
+            moving,
+
+        calibrating =
+            calibrating,
+
+        normalSpeed =
+            normalSpeed,
+
+        autoHomeEnabled =
+            autoHomeEnabled,
+
+        autoHomeMinutes =
+            autoHomeMinutes,
+
+        floorNames =
+            names,
+
+        namingFloor =
+            namingFloor
+    }
 
 
-    if name
-        and name ~= ""
-    then
-
-        return name
-    end
-
-
-    return nil
+    rednet.send(
+        BRIDGE_ID,
+        state,
+        PROTOCOL_STATE
+    )
 end
 
 
 -- ============================================================
--- AUTO-HOME TIMER
+-- AUTO HOME
 -- ============================================================
 
 local function cancelAutoHomeTimer()
@@ -513,13 +521,14 @@ local function startAutoHomeTimer()
 
     autoHomeTimer =
         os.startTimer(
-            autoHomeMinutes * 60
+            autoHomeMinutes
+            * 60
         )
 end
 
 
 -- ============================================================
--- REDSTONE PULS
+-- REDSTONE PULSE
 -- ============================================================
 
 local function pulse(side)
@@ -548,1737 +557,726 @@ end
 
 
 -- ============================================================
--- UI HILFSFUNKTIONEN
+-- HOME
 -- ============================================================
 
-local function centerText(y, text)
+local function home()
 
-    text =
-        tostring(text)
-
-
-    local x =
-        math.floor(
-            (WIDTH - #text)
-            / 2
-        ) + 1
+    cancelAutoHomeTimer()
 
 
-    if x < 1 then
-        x = 1
+    currentPage =
+        "main"
+
+    moving = true
+    targetFloor = 0
+
+
+    setNormalSpeed()
+
+    sendState()
+
+
+    if redstone.getInput(
+        HOME
+    ) then
+
+        currentFloor = 0
+
+        moving = false
+        targetFloor = nil
+
+        sendState()
+
+        return true
     end
 
 
-    monitor.setCursorPos(
-        x,
-        y
-    )
-
-    monitor.write(text)
-end
-
-
-local function fillArea(
-    x1,
-    y1,
-    x2,
-    y2,
-    color
-)
-
-    monitor.setBackgroundColor(
-        color
+    redstone.setOutput(
+        DIRECTION,
+        true
     )
 
 
-    for y = y1, y2 do
+    pulse(
+        SEQUENCER
+    )
 
-        monitor.setCursorPos(
-            x1,
-            y
+
+    local bottomArmed =
+        not redstone.getInput(
+            BOTTOM
         )
 
-        monitor.write(
-            string.rep(
-                " ",
-                math.max(
-                    0,
-                    x2 - x1 + 1
-                )
+
+    while true do
+
+        local homeNow =
+            redstone.getInput(
+                HOME
             )
-        )
-    end
-end
 
-
-local function drawButton(
-    x1,
-    y1,
-    x2,
-    y2,
-    label,
-    background,
-    foreground
-)
-
-    fillArea(
-        x1,
-        y1,
-        x2,
-        y2,
-        background
-    )
-
-
-    monitor.setTextColor(
-        foreground
-    )
-
-
-    local width =
-        x2 - x1 + 1
-
-
-    local labelX =
-        x1
-        + math.floor(
-            (width - #label)
-            / 2
-        )
-
-
-    local labelY =
-        y1
-        + math.floor(
-            (y2 - y1)
-            / 2
-        )
-
-
-    if labelX < x1 then
-        labelX = x1
-    end
-
-
-    monitor.setCursorPos(
-        labelX,
-        labelY
-    )
-
-    monitor.write(
-        string.sub(
-            label,
-            1,
-            width
-        )
-    )
-end
-
-
-local function buttonTouched(
-    button,
-    x,
-    y
-)
-
-    if not button then
-        return false
-    end
-
-
-    return
-        x >= button.x1
-        and x <= button.x2
-        and y >= button.y1
-        and y <= button.y2
-end
-
-
-local function resetButtons()
-
-    floorButtons = {}
-    nameFloorButtons = {}
-
-    settingsButton = nil
-
-    speedMinusButton = nil
-    speedPlusButton = nil
-
-    autoHomeButton = nil
-    autoMinusButton = nil
-    autoPlusButton = nil
-
-    namesButton = nil
-    calibrationButton = nil
-    backButton = nil
-end
-
-
-local function clearScreen()
-
-    WIDTH, HEIGHT =
-        monitor.getSize()
-
-
-    monitor.setBackgroundColor(
-        colors.black
-    )
-
-    monitor.setTextColor(
-        colors.white
-    )
-
-    monitor.clear()
-
-    resetButtons()
-end
-
-
-local function drawHeader(title)
-
-    monitor.setBackgroundColor(
-        colors.gray
-    )
-
-    monitor.setTextColor(
-        colors.white
-    )
-
-
-    monitor.setCursorPos(
-        1,
-        1
-    )
-
-    monitor.clearLine()
-
-
-    centerText(
-        1,
-        title
-    )
-
-
-    monitor.setBackgroundColor(
-        colors.black
-    )
-end
-
-
--- ============================================================
--- ETAGENBUTTON MIT NAME
--- ============================================================
-
-local function drawFloorButton(
-    x1,
-    y1,
-    x2,
-    y2,
-    floor,
-    background,
-    foreground
-)
-
-    fillArea(
-        x1,
-        y1,
-        x2,
-        y2,
-        background
-    )
-
-
-    monitor.setTextColor(
-        foreground
-    )
-
-
-    local width =
-        x2 - x1 + 1
-
-    local height =
-        y2 - y1 + 1
-
-
-    local floorText =
-        tostring(floor)
-
-
-    local floorX =
-        x1
-        + math.floor(
-            (width - #floorText)
-            / 2
-        )
-
-
-    local floorName =
-        getFloorName(floor)
-
-
-    -- Genug Hoehe fuer Nummer + Name
-
-    if height >= 3
-        and floorName
-    then
-
-        monitor.setCursorPos(
-            floorX,
-            y1
-        )
-
-        monitor.write(
-            floorText
-        )
-
-
-        local displayName =
-            floorName
-
-
-        if #displayName > width then
-
-            if width >= 4 then
-
-                displayName =
-                    string.sub(
-                        displayName,
-                        1,
-                        width - 2
-                    )
-                    .. ".."
-
-            else
-
-                displayName =
-                    string.sub(
-                        displayName,
-                        1,
-                        width
-                    )
-            end
-        end
-
-
-        local nameX =
-            x1
-            + math.floor(
-                (width - #displayName)
-                / 2
+        local bottomNow =
+            redstone.getInput(
+                BOTTOM
             )
 
 
-        monitor.setCursorPos(
-            nameX,
-            y2
-        )
-
-        monitor.write(
-            displayName
-        )
-
-    else
-
-        local floorY =
-            y1
-            + math.floor(
-                (height - 1)
-                / 2
-            )
-
-
-        monitor.setCursorPos(
-            floorX,
-            floorY
-        )
-
-        monitor.write(
-            floorText
-        )
-    end
-end
-
-
--- ============================================================
--- MAIN SCREEN
--- ============================================================
-
-local function drawMain()
-
-    clearScreen()
-
-    drawHeader(
-        "AUFZUG"
-    )
-
-
-    -- ========================================================
-    -- AKTUELLE ETAGE
-    -- ========================================================
-
-    monitor.setTextColor(
-        colors.lightGray
-    )
-
-    centerText(
-        3,
-        "AKTUELLE ETAGE"
-    )
-
-
-    monitor.setTextColor(
-        colors.white
-    )
-
-
-    if currentFloor ~= nil then
-
-        centerText(
-            4,
-            tostring(currentFloor)
-        )
-
-
-        local name =
-            getFloorName(
-                currentFloor
-            )
-
-
-        if name then
-
-            monitor.setTextColor(
-                colors.yellow
-            )
-
-            centerText(
-                5,
-                name
-            )
-        end
-
-    else
-
-        centerText(
-            4,
-            "?"
-        )
-    end
-
-
-    -- ========================================================
-    -- STATUS
-    -- ========================================================
-
-    if calibrating then
-
-        monitor.setTextColor(
-            colors.orange
-        )
-
-        centerText(
-            7,
-            "KALIBRIERUNG"
-        )
-
-
-    elseif moving then
-
-        monitor.setTextColor(
-            colors.orange
-        )
-
-
-        local directionText = ""
-
-
-        if targetFloor ~= nil
-            and currentFloor ~= nil
+        if not bottomArmed
+            and not bottomNow
         then
 
-            if targetFloor
-                < currentFloor
-            then
-
-                directionText = "^ "
-
-            else
-
-                directionText = "v "
-            end
+            bottomArmed = true
         end
 
 
-        if targetFloor ~= nil then
+        -- HOME = harter Stop
 
-            centerText(
-                7,
-                directionText
-                .. "FAHRT ZU "
-                .. tostring(
-                    targetFloor
-                )
+        if homeNow then
+
+            pulse(
+                SEQUENCER
             )
 
 
-            local targetName =
-                getFloorName(
-                    targetFloor
-                )
+            currentFloor = 0
+
+            moving = false
+            targetFloor = nil
 
 
-            if targetName then
+            sendState()
 
-                monitor.setTextColor(
-                    colors.yellow
-                )
-
-                centerText(
-                    8,
-                    targetName
-                )
-            end
-
-        else
-
-            centerText(
-                7,
-                "FAHRT"
-            )
+            return true
         end
 
 
-    else
+        -- BOTTOM unerwartet erneut erreicht
 
-        monitor.setTextColor(
-            colors.lime
+        if bottomArmed
+            and bottomNow
+        then
+
+            pulse(
+                SEQUENCER
+            )
+
+
+            currentFloor =
+                maxFloor
+
+            moving = false
+            targetFloor = nil
+
+
+            sendState()
+
+            startAutoHomeTimer()
+
+            return false
+        end
+
+
+        sleep(0.05)
+    end
+end
+
+
+-- ============================================================
+-- CALIBRATION
+-- ============================================================
+
+local function calibrate()
+
+    cancelAutoHomeTimer()
+
+
+    currentPage =
+        "main"
+
+    calibrating = true
+    moving = true
+    targetFloor = nil
+
+
+    setCalibrationSpeed()
+
+    sendState()
+
+
+    -- ========================================================
+    -- HOME FINDEN
+    -- ========================================================
+
+    if not redstone.getInput(
+        HOME
+    ) then
+
+        redstone.setOutput(
+            DIRECTION,
+            true
         )
 
-        centerText(
-            7,
-            "BEREIT"
+
+        pulse(
+            SEQUENCER
+        )
+
+
+        while not redstone.getInput(
+            HOME
+        ) do
+
+            sleep(0.05)
+        end
+
+
+        pulse(
+            SEQUENCER
         )
     end
 
 
+    currentFloor = 0
+
+    sendState()
+
+    sleep(0.5)
+
+
     -- ========================================================
-    -- ETAGEN
+    -- NACH UNTEN
     -- ========================================================
 
-    if maxFloor == nil then
-
-        monitor.setTextColor(
-            colors.white
-        )
-
-        centerText(
-            11,
-            "Keine Etagen"
-        )
-
-        centerText(
-            12,
-            "kalibriert"
-        )
-
-    else
-
-        local floorCount =
-            maxFloor + 1
+    local countedFloors = 0
 
 
-        local startY = 10
-        local endY = HEIGHT - 5
-
-        local availableHeight =
-            endY - startY + 1
-
-
-        -- Wir nutzen bei wenigen Etagen
-        -- breitere Buttons fuer die Namen.
-
-        local buttonWidth
-
-        if floorCount <= 3 then
-
-            buttonWidth =
-                math.floor(
-                    (WIDTH - 8)
-                    / floorCount
-                )
-
-            buttonWidth =
-                math.min(
-                    12,
-                    buttonWidth
-                )
-
-        elseif floorCount <= 6 then
-
-            buttonWidth = 9
-
-        else
-
-            buttonWidth = 7
-        end
+    redstone.setOutput(
+        DIRECTION,
+        false
+    )
 
 
-        local buttonHeight = 3
-
-        local gapX = 2
-        local gapY = 1
-
-
-        local columns =
-            math.floor(
-                (WIDTH + gapX)
-                /
-                (
-                    buttonWidth
-                    + gapX
-                )
-            )
+    pulse(
+        SEQUENCER
+    )
 
 
-        if columns < 1 then
-            columns = 1
-        end
+    -- HOME verlassen
+
+    while redstone.getInput(
+        HOME
+    ) do
+
+        sleep(0.05)
+    end
 
 
-        if columns > floorCount then
-            columns = floorCount
-        end
+    -- ========================================================
+    -- CONTACTS ZAEHLEN
+    -- ========================================================
 
-
-        local rows =
-            math.ceil(
-                floorCount
-                / columns
-            )
-
+    while true do
 
         while
-            rows
-                * (
-                    buttonHeight
-                    + gapY
-                )
-                - gapY
-                > availableHeight
+            not redstone.getInput(
+                CONTACT
+            )
             and
-            columns < floorCount
+            not redstone.getInput(
+                BOTTOM
+            )
         do
 
-            columns =
-                columns + 1
-
-            rows =
-                math.ceil(
-                    floorCount
-                    / columns
-                )
+            sleep(0.05)
         end
 
 
-        if
-            rows
-                * (
-                    buttonHeight
-                    + gapY
-                )
-                - gapY
-                > availableHeight
-        then
+        -- BOTTOM ist die letzte Etage
 
-            buttonHeight = 1
-            gapY = 0
-        end
+        if redstone.getInput(
+            BOTTOM
+        ) then
+
+            countedFloors =
+                countedFloors + 1
 
 
-        local totalWidth =
-            columns
-            * buttonWidth
-            + (
-                columns - 1
+            currentFloor =
+                countedFloors
+
+
+            pulse(
+                SEQUENCER
             )
-            * gapX
 
 
-        if totalWidth > WIDTH then
+            sendState()
 
-            buttonWidth =
-                math.max(
-                    3,
-                    math.floor(
-                        (
-                            WIDTH
-                            - (
-                                columns - 1
-                            )
-                            * gapX
-                        )
-                        / columns
-                    )
-                )
-
-
-            totalWidth =
-                columns
-                * buttonWidth
-                + (
-                    columns - 1
-                )
-                * gapX
+            break
         end
 
 
-        local startX =
-            math.floor(
-                (
-                    WIDTH
-                    - totalWidth
-                )
-                / 2
-            ) + 1
+        -- normaler Floor Contact
+
+        countedFloors =
+            countedFloors + 1
 
 
-        local index = 0
+        currentFloor =
+            countedFloors
 
 
-        for floor = 0, maxFloor do
-
-            local column =
-                index % columns
+        sendState()
 
 
-            local row =
-                math.floor(
-                    index / columns
-                )
+        while redstone.getInput(
+            CONTACT
+        ) do
 
+            if redstone.getInput(
+                BOTTOM
+            ) then
 
-            local x1 =
-                startX
-                + column
-                * (
-                    buttonWidth
-                    + gapX
-                )
-
-
-            local y1 =
-                startY
-                + row
-                * (
-                    buttonHeight
-                    + gapY
-                )
-
-
-            local x2 =
-                math.min(
-                    WIDTH,
-                    x1
-                    + buttonWidth
-                    - 1
-                )
-
-
-            local y2 =
-                math.min(
-                    endY,
-                    y1
-                    + buttonHeight
-                    - 1
-                )
-
-
-            if y1 <= endY
-                and y1 <= y2
-            then
-
-                local background =
-                    colors.gray
-
-                local foreground =
-                    colors.white
-
-
-                if floor
-                    == currentFloor
-                then
-
-                    background =
-                        colors.green
-
-
-                elseif moving
-                    and floor
-                        == targetFloor
-                then
-
-                    background =
-                        colors.orange
-
-
-                elseif moving
-                    or calibrating
-                then
-
-                    background =
-                        colors.lightGray
-
-                    foreground =
-                        colors.gray
-                end
-
-
-                drawFloorButton(
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    floor,
-                    background,
-                    foreground
-                )
-
-
-                floorButtons[
-                    #floorButtons + 1
-                ] = {
-
-                    floor = floor,
-
-                    x1 = x1,
-                    y1 = y1,
-
-                    x2 = x2,
-                    y2 = y2
-                }
+                break
             end
 
 
-            index =
-                index + 1
+            sleep(0.05)
         end
     end
 
 
+    maxFloor =
+        countedFloors
+
+
+    saveConfig()
+
+    sendState()
+
+    sleep(0.75)
+
+
     -- ========================================================
-    -- EINSTELLUNGEN BUTTON
+    -- ZURUECK NACH HOME
     -- ========================================================
 
-    local label =
-        "EINSTELLUNGEN"
+    redstone.setOutput(
+        DIRECTION,
+        true
+    )
 
 
-    local buttonWidth =
-        math.min(
-            math.max(
-                #label + 4,
-                18
-            ),
-            WIDTH - 4
-        )
+    pulse(
+        SEQUENCER
+    )
 
 
-    local x1 =
-        math.floor(
-            (
-                WIDTH
-                - buttonWidth
-            )
-            / 2
-        ) + 1
+    while redstone.getInput(
+        BOTTOM
+    ) do
+
+        sleep(0.05)
+    end
 
 
-    local x2 =
-        x1
-        + buttonWidth
-        - 1
+    while not redstone.getInput(
+        HOME
+    ) do
+
+        sleep(0.05)
+    end
 
 
-    local y1 =
-        HEIGHT - 3
-
-    local y2 =
-        HEIGHT - 1
+    pulse(
+        SEQUENCER
+    )
 
 
-    if not moving
-        and not calibrating
+    currentFloor = 0
+
+    setNormalSpeed()
+
+
+    calibrating = false
+    moving = false
+    targetFloor = nil
+
+
+    sendState()
+end
+
+
+-- ============================================================
+-- MOVE
+-- ============================================================
+
+local function moveTo(target)
+
+    if currentFloor == nil
+        or maxFloor == nil
     then
-
-        drawButton(
-            x1,
-            y1,
-            x2,
-            y2,
-            label,
-            colors.gray,
-            colors.white
-        )
-
-    else
-
-        drawButton(
-            x1,
-            y1,
-            x2,
-            y2,
-            label,
-            colors.lightGray,
-            colors.gray
-        )
-    end
-
-
-    settingsButton = {
-
-        x1 = x1,
-        y1 = y1,
-
-        x2 = x2,
-        y2 = y2
-    }
-end
-
-
--- ============================================================
--- SETTINGS
--- ============================================================
-
-local function drawSettings()
-
-    clearScreen()
-
-    drawHeader(
-        "EINSTELLUNGEN"
-    )
-
-
-    -- ========================================================
-    -- SPEED
-    -- ========================================================
-
-    monitor.setTextColor(
-        colors.lightGray
-    )
-
-    centerText(
-        3,
-        "FAHRGESCHWINDIGKEIT"
-    )
-
-
-    local center =
-        math.floor(
-            WIDTH / 2
-        )
-
-
-    local minusX1 =
-        center - 10
-
-    local minusX2 =
-        minusX1 + 5
-
-
-    local plusX1 =
-        center + 5
-
-    local plusX2 =
-        plusX1 + 5
-
-
-    drawButton(
-        minusX1,
-        5,
-        minusX2,
-        7,
-        "-",
-        colors.gray,
-        colors.white
-    )
-
-
-    drawButton(
-        plusX1,
-        5,
-        plusX2,
-        7,
-        "+",
-        colors.gray,
-        colors.white
-    )
-
-
-    speedMinusButton = {
-
-        x1 = minusX1,
-        y1 = 5,
-
-        x2 = minusX2,
-        y2 = 7
-    }
-
-
-    speedPlusButton = {
-
-        x1 = plusX1,
-        y1 = 5,
-
-        x2 = plusX2,
-        y2 = 7
-    }
-
-
-    monitor.setBackgroundColor(
-        colors.black
-    )
-
-    monitor.setTextColor(
-        colors.white
-    )
-
-
-    centerText(
-        6,
-        tostring(normalSpeed)
-        .. "%"
-    )
-
-
-    -- ========================================================
-    -- AUTO HOME
-    -- ========================================================
-
-    monitor.setTextColor(
-        colors.lightGray
-    )
-
-    centerText(
-        10,
-        "AUTO-RUECKFAHRT"
-    )
-
-
-    local autoLabel
-
-
-    if autoHomeEnabled then
-        autoLabel = "[X] AKTIV"
-    else
-        autoLabel = "[ ] AUS"
-    end
-
-
-    local autoWidth = 14
-
-    local autoX1 =
-        math.floor(
-            (WIDTH - autoWidth)
-            / 2
-        ) + 1
-
-
-    local autoX2 =
-        autoX1
-        + autoWidth
-        - 1
-
-
-    drawButton(
-        autoX1,
-        12,
-        autoX2,
-        14,
-        autoLabel,
-        autoHomeEnabled
-            and colors.green
-            or colors.gray,
-        colors.white
-    )
-
-
-    autoHomeButton = {
-
-        x1 = autoX1,
-        y1 = 12,
-
-        x2 = autoX2,
-        y2 = 14
-    }
-
-
-    -- ========================================================
-    -- AUTO HOME ZEIT
-    -- ========================================================
-
-    monitor.setTextColor(
-        colors.lightGray
-    )
-
-    centerText(
-        16,
-        "WARTEZEIT"
-    )
-
-
-    local autoMinusX1 =
-        center - 10
-
-    local autoMinusX2 =
-        autoMinusX1 + 5
-
-
-    local autoPlusX1 =
-        center + 5
-
-    local autoPlusX2 =
-        autoPlusX1 + 5
-
-
-    drawButton(
-        autoMinusX1,
-        18,
-        autoMinusX2,
-        20,
-        "-",
-        colors.gray,
-        colors.white
-    )
-
-
-    drawButton(
-        autoPlusX1,
-        18,
-        autoPlusX2,
-        20,
-        "+",
-        colors.gray,
-        colors.white
-    )
-
-
-    autoMinusButton = {
-
-        x1 = autoMinusX1,
-        y1 = 18,
-
-        x2 = autoMinusX2,
-        y2 = 20
-    }
-
-
-    autoPlusButton = {
-
-        x1 = autoPlusX1,
-        y1 = 18,
-
-        x2 = autoPlusX2,
-        y2 = 20
-    }
-
-
-    monitor.setBackgroundColor(
-        colors.black
-    )
-
-    monitor.setTextColor(
-        colors.white
-    )
-
-
-    centerText(
-        19,
-        tostring(
-            autoHomeMinutes
-        )
-        .. " MIN"
-    )
-
-
-    -- ========================================================
-    -- ETAGEN BENENNEN
-    -- ========================================================
-
-    local namesWidth =
-        math.min(
-            22,
-            WIDTH - 4
-        )
-
-
-    local namesX1 =
-        math.floor(
-            (
-                WIDTH
-                - namesWidth
-            )
-            / 2
-        ) + 1
-
-
-    local namesX2 =
-        namesX1
-        + namesWidth
-        - 1
-
-
-    drawButton(
-        namesX1,
-        23,
-        namesX2,
-        25,
-        "ETAGEN BENENNEN",
-        maxFloor
-            and colors.blue
-            or colors.lightGray,
-        maxFloor
-            and colors.white
-            or colors.gray
-    )
-
-
-    namesButton = {
-
-        x1 = namesX1,
-        y1 = 23,
-
-        x2 = namesX2,
-        y2 = 25
-    }
-
-
-    -- ========================================================
-    -- KALIBRIEREN
-    -- ========================================================
-
-    local calibrationWidth =
-        math.min(
-            20,
-            WIDTH - 4
-        )
-
-
-    local calibrationX1 =
-        math.floor(
-            (
-                WIDTH
-                - calibrationWidth
-            )
-            / 2
-        ) + 1
-
-
-    local calibrationX2 =
-        calibrationX1
-        + calibrationWidth
-        - 1
-
-
-    drawButton(
-        calibrationX1,
-        27,
-        calibrationX2,
-        29,
-        "KALIBRIEREN",
-        colors.orange,
-        colors.black
-    )
-
-
-    calibrationButton = {
-
-        x1 = calibrationX1,
-        y1 = 27,
-
-        x2 = calibrationX2,
-        y2 = 29
-    }
-
-
-    -- ========================================================
-    -- ZURUECK
-    -- ========================================================
-
-    local backWidth =
-        math.min(
-            16,
-            WIDTH - 4
-        )
-
-
-    local backX1 =
-        math.floor(
-            (
-                WIDTH
-                - backWidth
-            )
-            / 2
-        ) + 1
-
-
-    local backX2 =
-        backX1
-        + backWidth
-        - 1
-
-
-    local backY1 =
-        HEIGHT - 3
-
-    local backY2 =
-        HEIGHT - 1
-
-
-    drawButton(
-        backX1,
-        backY1,
-        backX2,
-        backY2,
-        "ZURUECK",
-        colors.gray,
-        colors.white
-    )
-
-
-    backButton = {
-
-        x1 = backX1,
-        y1 = backY1,
-
-        x2 = backX2,
-        y2 = backY2
-    }
-end
-
-
--- ============================================================
--- ETAGEN BENENNEN
--- ============================================================
-
-local function drawNames()
-
-    clearScreen()
-
-    drawHeader(
-        "ETAGEN BENENNEN"
-    )
-
-
-    monitor.setTextColor(
-        colors.lightGray
-    )
-
-    centerText(
-        3,
-        "ETAGE AUSWAEHLEN"
-    )
-
-
-    if maxFloor == nil then
-
-        monitor.setTextColor(
-            colors.red
-        )
-
-        centerText(
-            6,
-            "NICHT KALIBRIERT"
-        )
 
         return
     end
 
 
-    local floorCount =
-        maxFloor + 1
+    target =
+        tonumber(target)
 
 
-    local startY = 5
-    local endY = HEIGHT - 5
-
-
-    local buttonWidth = 12
-    local buttonHeight = 3
-
-    local gapX = 1
-    local gapY = 1
-
-
-    local columns =
-        math.floor(
-            (WIDTH + gapX)
-            /
-            (
-                buttonWidth
-                + gapX
-            )
-        )
-
-
-    if columns < 1 then
-        columns = 1
+    if target == nil then
+        return
     end
 
 
-    if columns > floorCount then
-        columns = floorCount
-    end
-
-
-    local rows =
-        math.ceil(
-            floorCount
-            / columns
-        )
-
-
-    local availableHeight =
-        endY - startY + 1
-
-
-    while
-        rows
-            * (
-                buttonHeight
-                + gapY
-            )
-            - gapY
-            > availableHeight
-        and
-        columns < floorCount
-    do
-
-        columns =
-            columns + 1
-
-        rows =
-            math.ceil(
-                floorCount
-                / columns
-            )
-    end
-
-
-    if
-        rows
-            * (
-                buttonHeight
-                + gapY
-            )
-            - gapY
-            > availableHeight
+    if target < 0
+        or target > maxFloor
     then
 
-        buttonHeight = 1
-        gapY = 0
+        return
     end
 
 
-    local totalWidth =
-        columns
-        * buttonWidth
-        + (
-            columns - 1
+    if target == currentFloor then
+
+        startAutoHomeTimer()
+
+        return
+    end
+
+
+    cancelAutoHomeTimer()
+
+
+    currentPage =
+        "main"
+
+
+    setNormalSpeed()
+
+
+    local goingUp =
+        target
+        < currentFloor
+
+
+    moving = true
+    targetFloor = target
+
+
+    sendState()
+
+
+    if goingUp then
+
+        redstone.setOutput(
+            DIRECTION,
+            true
         )
-        * gapX
-
-
-    if totalWidth > WIDTH then
-
-        buttonWidth =
-            math.max(
-                5,
-                math.floor(
-                    (
-                        WIDTH
-                        - (
-                            columns - 1
-                        )
-                        * gapX
-                    )
-                    / columns
-                )
-            )
-
-
-        totalWidth =
-            columns
-            * buttonWidth
-            + (
-                columns - 1
-            )
-            * gapX
-    end
-
-
-    local startX =
-        math.floor(
-            (
-                WIDTH
-                - totalWidth
-            )
-            / 2
-        ) + 1
-
-
-    local index = 0
-
-
-    for floor = 0, maxFloor do
-
-        local column =
-            index % columns
-
-
-        local row =
-            math.floor(
-                index / columns
-            )
-
-
-        local x1 =
-            startX
-            + column
-            * (
-                buttonWidth
-                + gapX
-            )
-
-
-        local y1 =
-            startY
-            + row
-            * (
-                buttonHeight
-                + gapY
-            )
-
-
-        local x2 =
-            math.min(
-                WIDTH,
-                x1
-                + buttonWidth
-                - 1
-            )
-
-
-        local y2 =
-            math.min(
-                endY,
-                y1
-                + buttonHeight
-                - 1
-            )
-
-
-        if y1 <= endY
-            and y1 <= y2
-        then
-
-            local name =
-                getFloorName(
-                    floor
-                )
-
-
-            local label =
-                tostring(floor)
-
-
-            if name then
-
-                local available =
-                    buttonWidth - 4
-
-
-                if available > 1 then
-
-                    label =
-                        tostring(floor)
-                        .. " "
-                        .. string.sub(
-                            name,
-                            1,
-                            available
-                        )
-                end
-            end
-
-
-            drawButton(
-                x1,
-                y1,
-                x2,
-                y2,
-                label,
-                colors.gray,
-                colors.white
-            )
-
-
-            nameFloorButtons[
-                #nameFloorButtons + 1
-            ] = {
-
-                floor = floor,
-
-                x1 = x1,
-                y1 = y1,
-
-                x2 = x2,
-                y2 = y2
-            }
-        end
-
-
-        index =
-            index + 1
-    end
-
-
-    -- Zurueck
-
-    local backWidth =
-        math.min(
-            16,
-            WIDTH - 4
-        )
-
-
-    local backX1 =
-        math.floor(
-            (
-                WIDTH
-                - backWidth
-            )
-            / 2
-        ) + 1
-
-
-    local backX2 =
-        backX1
-        + backWidth
-        - 1
-
-
-    local backY1 =
-        HEIGHT - 3
-
-    local backY2 =
-        HEIGHT - 1
-
-
-    drawButton(
-        backX1,
-        backY1,
-        backX2,
-        backY2,
-        "ZURUECK",
-        colors.gray,
-        colors.white
-    )
-
-
-    backButton = {
-
-        x1 = backX1,
-        y1 = backY1,
-
-        x2 = backX2,
-        y2 = backY2
-    }
-end
-
-
--- ============================================================
--- SCREEN
--- ============================================================
-
-local function drawScreen()
-
-    if currentPage
-        == "settings"
-    then
-
-        drawSettings()
-
-
-    elseif currentPage
-        == "names"
-    then
-
-        drawNames()
-
 
     else
 
-        drawMain()
+        redstone.setOutput(
+            DIRECTION,
+            false
+        )
+    end
+
+
+    -- aktuelle Sensorsignale merken
+
+    local contactActive =
+        redstone.getInput(
+            CONTACT
+        )
+
+    local homeArmed =
+        not redstone.getInput(
+            HOME
+        )
+
+    local bottomArmed =
+        not redstone.getInput(
+            BOTTOM
+        )
+
+
+    pulse(
+        SEQUENCER
+    )
+
+
+    while true do
+
+        local homeNow =
+            redstone.getInput(
+                HOME
+            )
+
+        local bottomNow =
+            redstone.getInput(
+                BOTTOM
+            )
+
+        local contactNow =
+            redstone.getInput(
+                CONTACT
+            )
+
+
+        -- ====================================================
+        -- START-ENDSCHALTER VERLASSEN
+        -- ====================================================
+
+        if not homeArmed
+            and not homeNow
+        then
+
+            homeArmed = true
+        end
+
+
+        if not bottomArmed
+            and not bottomNow
+        then
+
+            bottomArmed = true
+        end
+
+
+        -- ====================================================
+        -- HOME = HARTER STOP
+        -- ====================================================
+
+        if homeArmed
+            and homeNow
+        then
+
+            pulse(
+                SEQUENCER
+            )
+
+
+            currentFloor = 0
+
+            moving = false
+            targetFloor = nil
+
+
+            sendState()
+
+            return
+        end
+
+
+        -- ====================================================
+        -- BOTTOM = HARTER STOP
+        -- ====================================================
+
+        if bottomArmed
+            and bottomNow
+        then
+
+            pulse(
+                SEQUENCER
+            )
+
+
+            currentFloor =
+                maxFloor
+
+            moving = false
+            targetFloor = nil
+
+
+            sendState()
+
+            startAutoHomeTimer()
+
+            return
+        end
+
+
+        -- ====================================================
+        -- NORMALER FLOOR CONTACT
+        -- ====================================================
+
+        if contactNow
+            and not contactActive
+        then
+
+            if goingUp then
+
+                currentFloor =
+                    math.max(
+                        0,
+                        currentFloor - 1
+                    )
+
+            else
+
+                currentFloor =
+                    math.min(
+                        maxFloor,
+                        currentFloor + 1
+                    )
+            end
+
+
+            -- Ziel erreicht
+
+            if currentFloor
+                == target
+            then
+
+                pulse(
+                    SEQUENCER
+                )
+
+
+                moving = false
+                targetFloor = nil
+
+
+                sendState()
+
+                startAutoHomeTimer()
+
+                return
+
+            else
+
+                sendState()
+            end
+        end
+
+
+        contactActive =
+            contactNow
+
+
+        sleep(0.05)
     end
 end
 
 
 -- ============================================================
--- ETAGENNAME BEARBEITEN
+-- SPEED SETTINGS
 -- ============================================================
 
-local function editFloorName(floor)
+local function changeSpeed(amount)
 
-    clearScreen()
-
-    drawHeader(
-        "ETAGE "
-        .. tostring(floor)
-    )
+    normalSpeed =
+        normalSpeed
+        + amount
 
 
-    monitor.setTextColor(
-        colors.yellow
-    )
+    normalSpeed =
+        math.max(
+            50,
+            math.min(
+                100,
+                normalSpeed
+            )
+        )
 
-    centerText(
-        5,
-        "NAME AM COMPUTER"
-    )
 
-    centerText(
-        6,
-        "EINGEBEN"
-    )
+    setNormalSpeed()
+
+    saveConfig()
+
+    sendState()
+end
+
+
+-- ============================================================
+-- AUTO HOME SETTINGS
+-- ============================================================
+
+local function toggleAutoHome()
+
+    autoHomeEnabled =
+        not autoHomeEnabled
+
+
+    if autoHomeEnabled then
+
+        startAutoHomeTimer()
+
+    else
+
+        cancelAutoHomeTimer()
+    end
+
+
+    saveConfig()
+
+    sendState()
+end
+
+
+local function changeAutoHomeTime(
+    amount
+)
+
+    autoHomeMinutes =
+        autoHomeMinutes
+        + amount
+
+
+    autoHomeMinutes =
+        math.max(
+            1,
+            math.min(
+                60,
+                autoHomeMinutes
+            )
+        )
+
+
+    if autoHomeEnabled then
+        startAutoHomeTimer()
+    end
+
+
+    saveConfig()
+
+    sendState()
+end
+
+
+-- ============================================================
+-- FLOOR NAME EDITOR
+-- ============================================================
+
+local function editFloorName(
+    floor
+)
+
+    if maxFloor == nil then
+        return
+    end
+
+
+    if floor < 0
+        or floor > maxFloor
+    then
+
+        return
+    end
+
+
+    namingFloor =
+        floor
+
+
+    sendState()
 
 
     local oldName =
-        getFloorName(
-            floor
-        )
-
-
-    if oldName then
-
-        monitor.setTextColor(
-            colors.lightGray
-        )
-
-        centerText(
-            9,
-            "Aktuell:"
-        )
-
-
-        monitor.setTextColor(
-            colors.white
-        )
-
-        centerText(
-            10,
-            oldName
-        )
-    end
+        floorNames[floor]
 
 
     term.setBackgroundColor(
@@ -2298,19 +1296,18 @@ local function editFloorName(floor)
 
 
     print(
-        "================================"
+        "=============================="
     )
 
     print(
-        "   AUFZUG - ETAGE BENENNEN"
+        " AUFZUG - ETAGE BENENNEN"
     )
 
     print(
-        "================================"
+        "=============================="
     )
 
     print("")
-
 
     print(
         "Etage: "
@@ -2321,14 +1318,14 @@ local function editFloorName(floor)
     if oldName then
 
         print(
-            "Aktueller Name: "
+            "Aktuell: "
             .. oldName
         )
 
     else
 
         print(
-            "Aktueller Name: -"
+            "Aktuell: -"
         )
     end
 
@@ -2336,11 +1333,11 @@ local function editFloorName(floor)
     print("")
 
     print(
-        "Neuen Namen eingeben."
+        "Neuen Namen eingeben"
     )
 
     print(
-        "Leer lassen = Namen entfernen."
+        "Leer = Namen entfernen"
     )
 
     print("")
@@ -2369,7 +1366,8 @@ local function editFloorName(floor)
 
     if newName == "" then
 
-        floorNames[floor] = nil
+        floorNames[floor] =
+            nil
 
     else
 
@@ -2385,6 +1383,9 @@ local function editFloorName(floor)
     saveFloorNames()
 
 
+    namingFloor = nil
+
+
     term.clear()
 
     term.setCursorPos(
@@ -2394,899 +1395,226 @@ local function editFloorName(floor)
 
 
     print(
-        "Etage "
-        .. tostring(floor)
-        .. " gespeichert."
+        "Etage gespeichert."
     )
 
 
-    sleep(0.5)
-
-
-    currentPage =
-        "names"
-
-    drawScreen()
+    sendState()
 end
 
 
 -- ============================================================
--- NAECHSTEN CONTACT ABWARTEN
+-- COMMAND HANDLER
 -- ============================================================
 
-local function waitForNextFloor()
-
-    -- Aktuellen Contact verlassen
-
-    while redstone.getInput(
-        CONTACT
-    ) do
-
-        sleep(0.05)
-    end
-
-
-    -- Naechsten Contact erreichen
-
-    while not redstone.getInput(
-        CONTACT
-    ) do
-
-        -- HOME/BOTTOM werden in moveTo
-        -- fuer Endfahrten separat ueberwacht.
-
-        sleep(0.05)
-    end
-end
-
-
--- ============================================================
--- HOME
--- ============================================================
-
-local function home()
-
-    cancelAutoHomeTimer()
-
-    currentPage = "main"
-
-    moving = true
-    targetFloor = 0
-
-    setNormalSpeed()
-
-    drawScreen()
-
-
-    if redstone.getInput(
-        HOME
-    ) then
-
-        currentFloor = 0
-
-        moving = false
-        targetFloor = nil
-
-        drawScreen()
-
-        return
-    end
-
-
-    redstone.setOutput(
-        DIRECTION,
-        true
-    )
-
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    while not redstone.getInput(
-        HOME
-    ) do
-
-        -- Sicherheitsfall:
-        -- Wenn wir beim Hochfahren BOTTOM
-        -- verlassen, ist das kein Fehler.
-
-        sleep(0.05)
-    end
-
-
-    -- HOME ist IMMER harter Stop
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    currentFloor = 0
-
-    moving = false
-    targetFloor = nil
-
-    drawScreen()
-end
-
-
--- ============================================================
--- KALIBRIERUNG
--- ============================================================
-
-local function calibrate()
-
-    cancelAutoHomeTimer()
-
-    currentPage = "main"
-
-    calibrating = true
-    moving = true
-    targetFloor = nil
-
-    setCalibrationSpeed()
-
-    drawScreen()
-
-
-    -- ========================================================
-    -- HOME SUCHEN
-    -- ========================================================
-
-    if not redstone.getInput(
-        HOME
-    ) then
-
-        redstone.setOutput(
-            DIRECTION,
-            true
-        )
-
-
-        pulse(
-            SEQUENCER
-        )
-
-
-        while not redstone.getInput(
-            HOME
-        ) do
-
-            sleep(0.05)
-        end
-
-
-        -- HOME = harter Stop
-
-        pulse(
-            SEQUENCER
-        )
-    end
-
-
-    currentFloor = 0
-
-    drawScreen()
-
-    sleep(0.5)
-
-
-    -- ========================================================
-    -- RUNTERFAHREN
-    -- ========================================================
-
-    local countedFloors = 0
-
-
-    redstone.setOutput(
-        DIRECTION,
-        false
-    )
-
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    -- HOME erst verlassen
-
-    while redstone.getInput(
-        HOME
-    ) do
-
-        sleep(0.05)
-    end
-
-
-    -- ========================================================
-    -- ETAGEN ZAEHLEN
-    -- ========================================================
-
-    while true do
-
-        while
-            not redstone.getInput(
-                CONTACT
-            )
-            and
-            not redstone.getInput(
-                BOTTOM
-            )
-        do
-
-            sleep(0.05)
-        end
-
-
-        -- ====================================================
-        -- BOTTOM = LETZTE ETAGE + HARTER STOP
-        -- ====================================================
-
-        if redstone.getInput(
-            BOTTOM
-        ) then
-
-            countedFloors =
-                countedFloors + 1
-
-
-            currentFloor =
-                countedFloors
-
-
-            -- SOFORT STOPPEN
-
-            pulse(
-                SEQUENCER
-            )
-
-
-            drawScreen()
-
-            break
-        end
-
-
-        -- ====================================================
-        -- NORMALER CONTACT
-        -- ====================================================
-
-        countedFloors =
-            countedFloors + 1
-
-
-        currentFloor =
-            countedFloors
-
-
-        drawScreen()
-
-
-        while redstone.getInput(
-            CONTACT
-        ) do
-
-            -- Falls BOTTOM gleichzeitig
-            -- auftaucht, sofort raus.
-
-            if redstone.getInput(
-                BOTTOM
-            ) then
-
-                break
-            end
-
-
-            sleep(0.05)
-        end
-    end
-
-
-    -- ========================================================
-    -- SPEICHERN
-    -- ========================================================
-
-    maxFloor =
-        countedFloors
-
-
-    saveConfig()
-
-
-    drawScreen()
-
-    sleep(1)
-
-
-    -- ========================================================
-    -- WIEDER HOME
-    -- ========================================================
-
-    redstone.setOutput(
-        DIRECTION,
-        true
-    )
-
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    -- BOTTOM erst verlassen
-
-    while redstone.getInput(
-        BOTTOM
-    ) do
-
-        sleep(0.05)
-    end
-
-
-    while not redstone.getInput(
-        HOME
-    ) do
-
-        sleep(0.05)
-    end
-
-
-    -- HOME = harter Stop
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    currentFloor = 0
-
-
-    setNormalSpeed()
-
-
-    calibrating = false
-    moving = false
-    targetFloor = nil
-
-
-    drawScreen()
-end
-
-
--- ============================================================
--- FAHRT
--- ============================================================
-
-local function moveTo(target)
-
-    if currentFloor == nil then
-        return
-    end
-
-
-    if maxFloor == nil then
-        return
-    end
-
-
-    if target < 0
-        or target > maxFloor
+local function handleCommand(
+    message
+)
+
+    if type(message)
+        ~= "table"
     then
 
         return
     end
 
 
-    if target == currentFloor then
+    local action =
+        message.action
 
-        -- Auch ein Druck auf die aktuelle
-        -- Etage setzt Auto-Home neu.
 
-        startAutoHomeTimer()
+    -- Panel fragt Zustand an
+
+    if action
+        == "request_state"
+    then
+
+        sendState()
 
         return
     end
 
 
-    cancelAutoHomeTimer()
+    -- Während Fahrt/Kalibrierung
+    -- keine Bedienung zulassen
 
+    if moving
+        or calibrating
+    then
 
-    currentPage = "main"
-
-    setNormalSpeed()
-
-
-    local startFloor =
-        currentFloor
-
-
-    local goingUp =
-        target < currentFloor
-
-
-    moving = true
-    targetFloor = target
-
-
-    drawScreen()
-
-
-    if goingUp then
-
-        redstone.setOutput(
-            DIRECTION,
-            true
-        )
-
-    else
-
-        redstone.setOutput(
-            DIRECTION,
-            false
-        )
-    end
-
-
-    pulse(
-        SEQUENCER
-    )
-
-
-    -- ========================================================
-    -- START-ENDSCHALTER ERST VERLASSEN
-    -- ========================================================
-
-    if startFloor == 0 then
-
-        while redstone.getInput(
-            HOME
-        ) do
-
-            sleep(0.05)
-        end
-
-
-    elseif startFloor == maxFloor then
-
-        while redstone.getInput(
-            BOTTOM
-        ) do
-
-            sleep(0.05)
-        end
+        return
     end
 
 
     -- ========================================================
-    -- FAHRT ZU HOME
+    -- MAIN
     -- ========================================================
 
-    if target == 0 then
-
-        while true do
-
-            -- HOME = SOFORT STOP
-
-            if redstone.getInput(
-                HOME
-            ) then
-
-                pulse(
-                    SEQUENCER
-                )
-
-
-                currentFloor = 0
-
-                moving = false
-                targetFloor = nil
-
-
-                drawScreen()
-
-                return
-            end
-
-
-            -- BOTTOM waehrend Fahrt nach oben
-            -- waere unerwartet. Ebenfalls stoppen.
-
-            if redstone.getInput(
-                BOTTOM
-            ) then
-
-                pulse(
-                    SEQUENCER
-                )
-
-
-                currentFloor =
-                    maxFloor
-
-                moving = false
-                targetFloor = nil
-
-
-                drawScreen()
-
-                startAutoHomeTimer()
-
-                return
-            end
-
-
-            sleep(0.05)
-        end
-    end
-
-
-    -- ========================================================
-    -- FAHRT ZU BOTTOM
-    -- ========================================================
-
-    if target == maxFloor then
-
-        local contactActive = false
-
-
-        while true do
-
-            -- BOTTOM = SOFORT STOP
-
-            if redstone.getInput(
-                BOTTOM
-            ) then
-
-                pulse(
-                    SEQUENCER
-                )
-
-
-                currentFloor =
-                    maxFloor
-
-                moving = false
-                targetFloor = nil
-
-
-                drawScreen()
-
-                startAutoHomeTimer()
-
-                return
-            end
-
-
-            -- HOME waehrend Fahrt nach unten
-            -- nach dem Verlassen waere unerwartet.
-
-            if redstone.getInput(
-                HOME
-            ) then
-
-                pulse(
-                    SEQUENCER
-                )
-
-
-                currentFloor = 0
-
-                moving = false
-                targetFloor = nil
-
-
-                drawScreen()
-
-                return
-            end
-
-
-            -- Zwischenetagen mitzaehlen
-
-            local contact =
-                redstone.getInput(
-                    CONTACT
-                )
-
-
-            if contact
-                and not contactActive
-            then
-
-                contactActive = true
-
-
-                if currentFloor
-                    < maxFloor
-                then
-
-                    currentFloor =
-                        currentFloor + 1
-                end
-
-
-                drawScreen()
-
-
-            elseif not contact then
-
-                contactActive = false
-            end
-
-
-            sleep(0.05)
-        end
-    end
-
-
-    -- ========================================================
-    -- NORMALE ZIELETAGE
-    -- ========================================================
-
-    local contactActive =
-        redstone.getInput(
-            CONTACT
-        )
-
-
-    while currentFloor
-        ~= target
-    do
-
-        -- ====================================================
-        -- HARTER HOME-ENDSTOP
-        -- ====================================================
-
-        if redstone.getInput(
-            HOME
-        ) then
-
-            pulse(
-                SEQUENCER
-            )
-
-
-            currentFloor = 0
-
-            moving = false
-            targetFloor = nil
-
-
-            drawScreen()
-
-            return
-        end
-
-
-        -- ====================================================
-        -- HARTER BOTTOM-ENDSTOP
-        -- ====================================================
-
-        if redstone.getInput(
-            BOTTOM
-        ) then
-
-            pulse(
-                SEQUENCER
-            )
-
-
-            currentFloor =
-                maxFloor
-
-            moving = false
-            targetFloor = nil
-
-
-            drawScreen()
-
-            startAutoHomeTimer()
-
-            return
-        end
-
-
-        -- ====================================================
-        -- CONTACT FLANKE
-        -- ====================================================
-
-        local contact =
-            redstone.getInput(
-                CONTACT
-            )
-
-
-        if contact
-            and not contactActive
+    if action
+        == "go_floor"
+    then
+
+        if currentPage
+            == "main"
         then
 
-            contactActive = true
+            moveTo(
+                message.floor
+            )
+        end
 
 
-            if goingUp then
+    elseif action
+        == "open_settings"
+    then
 
-                currentFloor =
-                    currentFloor - 1
+        currentPage =
+            "settings"
 
-            else
-
-                currentFloor =
-                    currentFloor + 1
-            end
+        sendState()
 
 
-            drawScreen()
+    -- ========================================================
+    -- SETTINGS
+    -- ========================================================
+
+    elseif action
+        == "speed_minus"
+    then
+
+        changeSpeed(-5)
 
 
-            if currentFloor
-                == target
-            then
+    elseif action
+        == "speed_plus"
+    then
 
-                pulse(
-                    SEQUENCER
+        changeSpeed(5)
+
+
+    elseif action
+        == "toggle_auto_home"
+    then
+
+        toggleAutoHome()
+
+
+    elseif action
+        == "auto_time_minus"
+    then
+
+        changeAutoHomeTime(-1)
+
+
+    elseif action
+        == "auto_time_plus"
+    then
+
+        changeAutoHomeTime(1)
+
+
+    elseif action
+        == "open_names"
+    then
+
+        if maxFloor ~= nil then
+
+            currentPage =
+                "names"
+
+            sendState()
+        end
+
+
+    elseif action
+        == "calibrate"
+    then
+
+        calibrate()
+
+
+    elseif action
+        == "back_main"
+    then
+
+        currentPage =
+            "main"
+
+        sendState()
+
+        startAutoHomeTimer()
+
+
+    -- ========================================================
+    -- NAMES
+    -- ========================================================
+
+    elseif action
+        == "edit_name"
+    then
+
+        if currentPage
+            == "names"
+        then
+
+            local floor =
+                tonumber(
+                    message.floor
                 )
 
-                break
+
+            if floor ~= nil then
+
+                editFloorName(
+                    floor
+                )
             end
-
-
-        elseif not contact then
-
-            contactActive = false
         end
 
 
-        sleep(0.05)
+    elseif action
+        == "back_settings"
+    then
+
+        currentPage =
+            "settings"
+
+        sendState()
     end
-
-
-    moving = false
-    targetFloor = nil
-
-
-    drawScreen()
-
-
-    startAutoHomeTimer()
 end
 
 
 -- ============================================================
--- SPEED AENDERN
--- ============================================================
-
-local function changeSpeed(amount)
-
-    normalSpeed =
-        normalSpeed
-        + amount
-
-
-    if normalSpeed < 50 then
-        normalSpeed = 50
-    end
-
-
-    if normalSpeed > 100 then
-        normalSpeed = 100
-    end
-
-
-    setNormalSpeed()
-
-    saveConfig()
-
-    drawScreen()
-end
-
-
--- ============================================================
--- AUTO HOME AN/AUS
--- ============================================================
-
-local function toggleAutoHome()
-
-    autoHomeEnabled =
-        not autoHomeEnabled
-
-
-    if not autoHomeEnabled then
-
-        cancelAutoHomeTimer()
-
-    else
-
-        startAutoHomeTimer()
-    end
-
-
-    saveConfig()
-
-    drawScreen()
-end
-
-
--- ============================================================
--- AUTO HOME ZEIT
--- ============================================================
-
-local function changeAutoHomeTime(amount)
-
-    autoHomeMinutes =
-        autoHomeMinutes
-        + amount
-
-
-    if autoHomeMinutes < 1 then
-        autoHomeMinutes = 1
-    end
-
-
-    if autoHomeMinutes > 60 then
-        autoHomeMinutes = 60
-    end
-
-
-    -- Falls bereits ein Timer laeuft:
-    -- mit neuer Zeit neu starten.
-
-    if autoHomeEnabled then
-
-        startAutoHomeTimer()
-    end
-
-
-    saveConfig()
-
-    drawScreen()
-end
-
-
--- ============================================================
--- BUTTON -> ETAGE
--- ============================================================
-
-local function getTouchedFloor(
-    buttons,
-    x,
-    y
-)
-
-    for _, button
-        in ipairs(buttons)
-    do
-
-        if buttonTouched(
-            button,
-            x,
-            y
-        ) then
-
-            return button.floor
-        end
-    end
-
-
-    return nil
-end
-
-
--- ============================================================
--- START
+-- STARTUP
 -- ============================================================
 
 loadConfig()
-
 loadFloorNames()
 
 setNormalSpeed()
 
+
+print(
+    "Elevator Main #"
+    .. os.getComputerID()
+)
+
+print(
+    "Bridge: #"
+    .. BRIDGE_ID
+)
+
+print(
+    "Network: "
+    .. NETWORK_SIDE
+)
+
+
+-- Beim Start erst HOME suchen
+
 home()
 
-drawScreen()
+sendState()
 
 
 -- ============================================================
@@ -3303,208 +1631,45 @@ while true do
 
 
     -- ========================================================
-    -- MONITOR TOUCH
+    -- NETWORK
     -- ========================================================
 
     if event
-        == "monitor_touch"
+        == "rednet_message"
     then
 
-        local side = p1
-        local x = p2
-        local y = p3
+        local sender =
+            p1
+
+        local message =
+            p2
+
+        local protocol =
+            p3
 
 
-        -- ====================================================
-        -- MAIN
-        -- ====================================================
-
-        if currentPage
-            == "main"
+        if sender
+            == BRIDGE_ID
+            and protocol
+                == PROTOCOL_COMMAND
         then
 
-            if not moving
-                and not calibrating
-            then
-
-                if buttonTouched(
-                    settingsButton,
-                    x,
-                    y
-                ) then
-
-                    currentPage =
-                        "settings"
-
-                    drawScreen()
-
-
-                else
-
-                    local selectedFloor =
-                        getTouchedFloor(
-                            floorButtons,
-                            x,
-                            y
-                        )
-
-
-                    if selectedFloor
-                        ~= nil
-                    then
-
-                        moveTo(
-                            selectedFloor
-                        )
-                    end
-                end
-            end
-
-
-        -- ====================================================
-        -- SETTINGS
-        -- ====================================================
-
-        elseif currentPage
-            == "settings"
-        then
-
-            if buttonTouched(
-                speedMinusButton,
-                x,
-                y
-            ) then
-
-                changeSpeed(-5)
-
-
-            elseif buttonTouched(
-                speedPlusButton,
-                x,
-                y
-            ) then
-
-                changeSpeed(5)
-
-
-            elseif buttonTouched(
-                autoHomeButton,
-                x,
-                y
-            ) then
-
-                toggleAutoHome()
-
-
-            elseif buttonTouched(
-                autoMinusButton,
-                x,
-                y
-            ) then
-
-                changeAutoHomeTime(-1)
-
-
-            elseif buttonTouched(
-                autoPlusButton,
-                x,
-                y
-            ) then
-
-                changeAutoHomeTime(1)
-
-
-            elseif maxFloor ~= nil
-                and buttonTouched(
-                    namesButton,
-                    x,
-                    y
-                )
-            then
-
-                currentPage =
-                    "names"
-
-                drawScreen()
-
-
-            elseif buttonTouched(
-                calibrationButton,
-                x,
-                y
-            ) then
-
-                calibrate()
-
-
-            elseif buttonTouched(
-                backButton,
-                x,
-                y
-            ) then
-
-                currentPage =
-                    "main"
-
-                drawScreen()
-
-
-                -- Erst nach Verlassen
-                -- der Einstellungen darf
-                -- Auto-Home wieder loslegen.
-
-                startAutoHomeTimer()
-            end
-
-
-        -- ====================================================
-        -- NAMEN
-        -- ====================================================
-
-        elseif currentPage
-            == "names"
-        then
-
-            local selectedFloor =
-                getTouchedFloor(
-                    nameFloorButtons,
-                    x,
-                    y
-                )
-
-
-            if selectedFloor
-                ~= nil
-            then
-
-                editFloorName(
-                    selectedFloor
-                )
-
-
-            elseif buttonTouched(
-                backButton,
-                x,
-                y
-            ) then
-
-                currentPage =
-                    "settings"
-
-                drawScreen()
-            end
+            handleCommand(
+                message
+            )
         end
 
 
     -- ========================================================
-    -- AUTO-HOME TIMER
+    -- AUTO HOME TIMER
     -- ========================================================
 
     elseif event
         == "timer"
     then
 
-        local timerID = p1
+        local timerID =
+            p1
 
 
         if autoHomeTimer ~= nil
@@ -3512,15 +1677,9 @@ while true do
                 == autoHomeTimer
         then
 
-            autoHomeTimer = nil
+            autoHomeTimer =
+                nil
 
-
-            -- Nur fahren, wenn:
-            -- - Auto Home noch aktiv
-            -- - nicht Etage 0
-            -- - Aufzug steht
-            -- - keine Kalibrierung
-            -- - Main Screen aktiv
 
             if autoHomeEnabled
                 and currentFloor ~= nil
@@ -3529,6 +1688,9 @@ while true do
                 and not calibrating
             then
 
+                -- Nur automatisch fahren,
+                -- wenn der Nutzer auf MAIN ist.
+
                 if currentPage
                     == "main"
                 then
@@ -3536,12 +1698,6 @@ while true do
                     moveTo(0)
 
                 else
-
-                    -- Benutzer ist noch in
-                    -- Einstellungen/Namen.
-                    --
-                    -- Nicht einfach losfahren.
-                    -- Timer erneut starten.
 
                     startAutoHomeTimer()
                 end
