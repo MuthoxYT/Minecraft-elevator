@@ -14,7 +14,10 @@ monitor.setTextColor(colors.white)
 monitor.clear()
 
 monitor.setCursorPos(2, 2)
-monitor.write("WARTE AUF HAUPTCOMPUTER")
+monitor.write("PANEL AKTIV")
+
+monitor.setCursorPos(2, 4)
+monitor.write("WARTE AUF DATEN")
 
 while true do
     local event, p1, p2, p3 = os.pullEvent()
@@ -44,6 +47,11 @@ while true do
         local x = p2
         local y = p3
 
+        monitor.setTextColor(colors.yellow)
+        monitor.setCursorPos(2, 6)
+        monitor.clearLine()
+        monitor.write("Touch: " .. x .. "," .. y)
+
         rednet.send(
             SENDER_ID,
             {
@@ -52,16 +60,6 @@ while true do
                 y = y
             },
             "elevator_touch_test"
-        )
-
-        monitor.setTextColor(colors.yellow)
-        monitor.setCursorPos(2, 6)
-        monitor.clearLine()
-        monitor.write(
-            "Touch: "
-            .. x
-            .. ","
-            .. y
         )
     end
 end
