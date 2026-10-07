@@ -1,21 +1,26 @@
 -- ============================================================
 -- CREATE + CC:TWEAKED ELEVATOR CONTROLLER
 --
--- REDSTONE:
+-- COMPUTER:
 -- left   = Richtungs-Gearshift
 -- back   = Sequenced Gearshift
 -- right  = normale Etagen-Contacts
--- top    = HOME / oberste Etage 0
+-- top    = HOME / Etage 0
 -- bottom = BOTTOM / unterste Etage
+-- front  = Wired Modem
 --
--- DIRECTION:
--- true  = hoch
--- false = runter
+-- WIRED NETWORK:
+-- monitor_0
+-- redstone_relay_0 = Geschwindigkeitssteuerung
+--
+-- Adjustable Chain Gearshift:
+-- Signal 0  = 100 %
+-- Signal 15 =  50 %
 -- ============================================================
 
 
 -- ============================================================
--- KONFIGURATION
+-- HARDWARE
 -- ============================================================
 
 local DIRECTION = "left"
@@ -24,7 +29,18 @@ local CONTACT   = "right"
 local HOME      = "top"
 local BOTTOM    = "bottom"
 
+local SPEED_RELAY_NAME = "redstone_relay_1"
+
+-- DIE SEITE DES REDSTONE RELAYS,
+-- AN DER DAS SIGNAL ZUM ADJUSTABLE CHAIN GEARSHIFT RAUSGEHT
+local SPEED_SIDE = "right"
+
 local CONFIG_FILE = "elevator.cfg"
+
+
+-- ============================================================
+-- ZUSTAND
+-- ============================================================
 
 local currentFloor = nil
 local maxFloor = nil
@@ -33,9 +49,13 @@ local moving = false
 local calibrating = false
 local targetFloor = nil
 
+-- normale Fahrgeschwindigkeit in Prozent
+-- erlaubt: 50 - 100
+local normalSpeed = 70
+
 
 -- ============================================================
--- MONITOR
+-- PERIPHERALS
 -- ============================================================
 
 local monitor = peripheral.find("monitor")
@@ -44,16 +64,117 @@ if not monitor then
     error("Kein Advanced Monitor gefunden!")
 end
 
+
+local speedRelay =
+    peripheral.wrap(SPEED_RELAY_NAME)
+
+if not speedRelay then
+    error(
+        "Redstone Relay '"
+        .. SPEED_RELAY_NAME
+        .. "' nicht gefunden!"
+    )
+end
+
+
 monitor.setTextScale(0.5)
 
-local WIDTH, HEIGHT = monitor.getSize()
+local WIDTH, HEIGHT =
+    monitor.getSize()
+
+
+-- ============================================================
+-- UI
+-- ============================================================
 
 local buttons = {}
+
 local calibrationButton = nil
+local speedMinusButton = nil
+local speedPlusButton = nil
+
+
+-- ============================================================
+-- SPEED
+--
+-- Adjustable Chain Gearshift:
+--
+-- 0  = 100 %
+-- 15 = 50 %
+--
+-- Prozent -> Redstone 0-15
+-- ============================================================
+
+local function speedPercentToSignal(percent)
+
+    if percent < 50 then
+        percent = 50
+    end
+
+    if percent > 100 then
+        percent = 100
+    end
+
+
+    -- 100 % -> 0
+    --  50 % -> 15
+
+    local signal =
+        math.floor(
+            ((100 - percent) / 50)
+            * 15
+            + 0.5
+        )
+
+
+    if signal < 0 then
+        signal = 0
+    end
+
+    if signal > 15 then
+        signal = 15
+    end
+
+
+    return signal
+end
+
+
+local function setSpeed(percent)
+
+    local signal =
+        speedPercentToSignal(
+            percent
+        )
+
+
+    speedRelay.setAnalogOutput(
+        SPEED_SIDE,
+        signal
+    )
+end
+
+
+local function setNormalSpeed()
+
+    setSpeed(
+        normalSpeed
+    )
+end
+
+
+local function setCalibrationSpeed()
+
+    -- Kalibrierung immer Vollgas
+    setSpeed(100)
+end
 
 
 -- ============================================================
 -- KONFIGURATION LADEN
+--
+-- Zeile 1 = maxFloor
+-- Zeile 2 = normalSpeed
 -- ============================================================
 
 local function loadConfig()
@@ -62,24 +183,54 @@ local function loadConfig()
         return false
     end
 
-    local file = fs.open(CONFIG_FILE, "r")
+
+    local file =
+        fs.open(
+            CONFIG_FILE,
+            "r"
+        )
 
     if not file then
         return false
     end
 
-    local value = file.readLine()
+
+    local floorValue =
+        file.readLine()
+
+    local speedValue =
+        file.readLine()
+
     file.close()
 
-    local number = tonumber(value)
 
-    if not number or number < 1 then
-        return false
+    local loadedFloor =
+        tonumber(floorValue)
+
+    local loadedSpeed =
+        tonumber(speedValue)
+
+
+    if loadedFloor
+        and loadedFloor >= 1
+    then
+
+        maxFloor =
+            loadedFloor
     end
 
-    maxFloor = number
 
-    return true
+    if loadedSpeed
+        and loadedSpeed >= 50
+        and loadedSpeed <= 100
+    then
+
+        normalSpeed =
+            loadedSpeed
+    end
+
+
+    return maxFloor ~= nil
 end
 
 
@@ -89,30 +240,68 @@ end
 
 local function saveConfig()
 
-    local file = fs.open(CONFIG_FILE, "w")
+    local file =
+        fs.open(
+            CONFIG_FILE,
+            "w"
+        )
+
 
     if not file then
-        error("Konfiguration konnte nicht gespeichert werden!")
+
+        error(
+            "Konfiguration konnte nicht gespeichert werden!"
+        )
     end
 
-    file.writeLine(tostring(maxFloor))
+
+    if maxFloor ~= nil then
+
+        file.writeLine(
+            tostring(maxFloor)
+        )
+
+    else
+
+        file.writeLine("")
+    end
+
+
+    file.writeLine(
+        tostring(normalSpeed)
+    )
+
+
     file.close()
 end
 
 
 -- ============================================================
--- REDSTONE-PULS
+-- REDSTONE PULS
 -- ============================================================
 
 local function pulse(side)
 
-    redstone.setOutput(side, false)
+    redstone.setOutput(
+        side,
+        false
+    )
+
     sleep(0.1)
 
-    redstone.setOutput(side, true)
+
+    redstone.setOutput(
+        side,
+        true
+    )
+
     sleep(0.2)
 
-    redstone.setOutput(side, false)
+
+    redstone.setOutput(
+        side,
+        false
+    )
 end
 
 
@@ -127,26 +316,45 @@ local function centerText(y, text)
             (WIDTH - #text) / 2
         ) + 1
 
+
     if x < 1 then
         x = 1
     end
 
-    monitor.setCursorPos(x, y)
+
+    monitor.setCursorPos(
+        x,
+        y
+    )
+
     monitor.write(text)
 end
 
 
 -- ============================================================
--- FLAECHE ZEICHNEN
+-- FLAECHE FUELLEN
 -- ============================================================
 
-local function fillArea(x1, y1, x2, y2, color)
+local function fillArea(
+    x1,
+    y1,
+    x2,
+    y2,
+    color
+)
 
-    monitor.setBackgroundColor(color)
+    monitor.setBackgroundColor(
+        color
+    )
+
 
     for y = y1, y2 do
 
-        monitor.setCursorPos(x1, y)
+        monitor.setCursorPos(
+            x1,
+            y
+        )
+
 
         monitor.write(
             string.rep(
@@ -162,44 +370,135 @@ end
 
 
 -- ============================================================
--- MONITOR ZEICHNEN
+-- BUTTON ZEICHNEN
+-- ============================================================
+
+local function drawButton(
+    x1,
+    y1,
+    x2,
+    y2,
+    label,
+    background,
+    foreground
+)
+
+    fillArea(
+        x1,
+        y1,
+        x2,
+        y2,
+        background
+    )
+
+
+    monitor.setTextColor(
+        foreground
+    )
+
+
+    local width =
+        x2 - x1 + 1
+
+
+    local labelX =
+        x1
+        + math.floor(
+            (width - #label) / 2
+        )
+
+
+    local labelY =
+        y1
+        + math.floor(
+            (y2 - y1) / 2
+        )
+
+
+    monitor.setCursorPos(
+        labelX,
+        labelY
+    )
+
+    monitor.write(label)
+end
+
+
+-- ============================================================
+-- MONITOR
 -- ============================================================
 
 local function drawScreen()
 
-    WIDTH, HEIGHT = monitor.getSize()
+    WIDTH, HEIGHT =
+        monitor.getSize()
 
-    monitor.setBackgroundColor(colors.black)
-    monitor.setTextColor(colors.white)
+
+    monitor.setBackgroundColor(
+        colors.black
+    )
+
+    monitor.setTextColor(
+        colors.white
+    )
+
     monitor.clear()
 
+
     buttons = {}
+
     calibrationButton = nil
+    speedMinusButton = nil
+    speedPlusButton = nil
 
 
     -- ========================================================
-    -- TITEL
+    -- HEADER
     -- ========================================================
 
-    monitor.setBackgroundColor(colors.gray)
-    monitor.setTextColor(colors.white)
+    monitor.setBackgroundColor(
+        colors.gray
+    )
 
-    monitor.setCursorPos(1, 1)
+    monitor.setTextColor(
+        colors.white
+    )
+
+    monitor.setCursorPos(
+        1,
+        1
+    )
+
     monitor.clearLine()
 
-    centerText(1, "AUFZUG")
+    centerText(
+        1,
+        "AUFZUG"
+    )
 
 
     -- ========================================================
     -- AKTUELLE ETAGE
     -- ========================================================
 
-    monitor.setBackgroundColor(colors.black)
-    monitor.setTextColor(colors.lightGray)
+    monitor.setBackgroundColor(
+        colors.black
+    )
 
-    centerText(3, "AKTUELLE ETAGE")
+    monitor.setTextColor(
+        colors.lightGray
+    )
 
-    monitor.setTextColor(colors.white)
+    centerText(
+        3,
+        "AKTUELLE ETAGE"
+    )
+
+
+    monitor.setTextColor(
+        colors.white
+    )
+
 
     if currentFloor ~= nil then
 
@@ -210,7 +509,10 @@ local function drawScreen()
 
     else
 
-        centerText(4, "?")
+        centerText(
+            4,
+            "?"
+        )
     end
 
 
@@ -220,23 +522,31 @@ local function drawScreen()
 
     if calibrating then
 
-        monitor.setTextColor(colors.orange)
+        monitor.setTextColor(
+            colors.orange
+        )
 
         centerText(
             6,
-            "KALIBRIERUNG"
+            "KALIBRIERUNG - 100%"
         )
+
 
     elseif moving then
 
-        monitor.setTextColor(colors.orange)
+        monitor.setTextColor(
+            colors.orange
+        )
+
 
         if targetFloor ~= nil then
 
             centerText(
                 6,
                 "FAHRE ZU "
-                    .. tostring(targetFloor)
+                .. tostring(
+                    targetFloor
+                )
             )
 
         else
@@ -247,9 +557,12 @@ local function drawScreen()
             )
         end
 
+
     else
 
-        monitor.setTextColor(colors.lime)
+        monitor.setTextColor(
+            colors.lime
+        )
 
         centerText(
             6,
@@ -259,26 +572,139 @@ local function drawScreen()
 
 
     -- ========================================================
+    -- SPEED
+    -- ========================================================
+
+    monitor.setTextColor(
+        colors.lightGray
+    )
+
+    centerText(
+        8,
+        "FAHRGESCHWINDIGKEIT"
+    )
+
+
+    local minusX1 =
+        math.floor(
+            WIDTH / 2
+        ) - 9
+
+    local minusX2 =
+        minusX1 + 4
+
+
+    local plusX1 =
+        math.floor(
+            WIDTH / 2
+        ) + 5
+
+    local plusX2 =
+        plusX1 + 4
+
+
+    local speedY1 = 9
+    local speedY2 = 11
+
+
+    local controlColor =
+        colors.gray
+
+    local controlText =
+        colors.white
+
+
+    if moving
+        or calibrating
+    then
+
+        controlColor =
+            colors.lightGray
+
+        controlText =
+            colors.gray
+    end
+
+
+    drawButton(
+        minusX1,
+        speedY1,
+        minusX2,
+        speedY2,
+        "-",
+        controlColor,
+        controlText
+    )
+
+
+    drawButton(
+        plusX1,
+        speedY1,
+        plusX2,
+        speedY2,
+        "+",
+        controlColor,
+        controlText
+    )
+
+
+    monitor.setBackgroundColor(
+        colors.black
+    )
+
+    monitor.setTextColor(
+        colors.white
+    )
+
+
+    local speedText =
+        tostring(
+            normalSpeed
+        ) .. "%"
+
+
+    centerText(
+        10,
+        speedText
+    )
+
+
+    speedMinusButton = {
+        x1 = minusX1,
+        y1 = speedY1,
+        x2 = minusX2,
+        y2 = speedY2
+    }
+
+
+    speedPlusButton = {
+        x1 = plusX1,
+        y1 = speedY1,
+        x2 = plusX2,
+        y2 = speedY2
+    }
+
+
+    -- ========================================================
     -- NOCH NICHT KALIBRIERT
     -- ========================================================
 
     if maxFloor == nil then
 
-        monitor.setTextColor(colors.white)
-
-        centerText(
-            9,
-            "Keine Kalibrierung"
+        monitor.setTextColor(
+            colors.white
         )
 
+
         centerText(
-            10,
-            "vorhanden"
+            14,
+            "Keine Kalibrierung"
         )
 
 
         local label =
             "KALIBRIEREN"
+
 
         local buttonWidth =
             math.min(
@@ -289,19 +715,28 @@ local function drawScreen()
                 WIDTH - 4
             )
 
+
         local x1 =
             math.floor(
-                (WIDTH - buttonWidth) / 2
+                (
+                    WIDTH
+                    - buttonWidth
+                ) / 2
             ) + 1
 
+
         local x2 =
-            x1 + buttonWidth - 1
+            x1
+            + buttonWidth
+            - 1
+
 
         local y1 =
             math.max(
-                12,
+                16,
                 HEIGHT - 4
             )
+
 
         local y2 =
             math.min(
@@ -312,39 +747,15 @@ local function drawScreen()
 
         if y2 >= y1 then
 
-            fillArea(
+            drawButton(
                 x1,
                 y1,
                 x2,
                 y2,
-                colors.orange
-            )
-
-            monitor.setTextColor(
+                label,
+                colors.orange,
                 colors.black
             )
-
-            local labelX =
-                x1
-                + math.floor(
-                    (
-                        buttonWidth
-                        - #label
-                    ) / 2
-                )
-
-            local labelY =
-                y1
-                + math.floor(
-                    (y2 - y1) / 2
-                )
-
-            monitor.setCursorPos(
-                labelX,
-                labelY
-            )
-
-            monitor.write(label)
 
 
             calibrationButton = {
@@ -375,20 +786,27 @@ local function drawScreen()
     local floorCount =
         maxFloor + 1
 
-    local startY = 8
+
+    local startY = 13
+
 
     local calibrationHeight = 3
 
+
     local calibrationY1 =
-        HEIGHT - calibrationHeight
+        HEIGHT
+        - calibrationHeight
+
 
     local calibrationY2 =
         HEIGHT - 1
+
 
     local availableHeight =
         calibrationY1
         - startY
         - 1
+
 
     if availableHeight < 1 then
         availableHeight = 1
@@ -409,9 +827,11 @@ local function drawScreen()
             (buttonWidth + gapX)
         )
 
+
     if columns < 1 then
         columns = 1
     end
+
 
     if columns > floorCount then
         columns = floorCount
@@ -420,30 +840,40 @@ local function drawScreen()
 
     local rows =
         math.ceil(
-            floorCount / columns
+            floorCount
+            / columns
         )
 
 
     while
         rows
-            * (buttonHeight + gapY)
+            * (
+                buttonHeight
+                + gapY
+            )
             - gapY
             > availableHeight
         and columns < floorCount
     do
 
-        columns = columns + 1
+        columns =
+            columns + 1
+
 
         rows =
             math.ceil(
-                floorCount / columns
+                floorCount
+                / columns
             )
     end
 
 
     if
         rows
-            * (buttonHeight + gapY)
+            * (
+                buttonHeight
+                + gapY
+            )
             - gapY
         > availableHeight
     then
@@ -454,13 +884,21 @@ local function drawScreen()
 
 
     local totalWidth =
-        columns * buttonWidth
-        + (columns - 1) * gapX
+        columns
+        * buttonWidth
+        + (
+            columns - 1
+        ) * gapX
+
 
     local startX =
         math.floor(
-            (WIDTH - totalWidth) / 2
+            (
+                WIDTH
+                - totalWidth
+            ) / 2
         ) + 1
+
 
     if startX < 1 then
         startX = 1
@@ -475,6 +913,7 @@ local function drawScreen()
         local column =
             index % columns
 
+
         local row =
             math.floor(
                 index / columns
@@ -484,23 +923,36 @@ local function drawScreen()
         local x1 =
             startX
             + column
-                * (buttonWidth + gapX)
+            * (
+                buttonWidth
+                + gapX
+            )
+
 
         local y1 =
             startY
             + row
-                * (buttonHeight + gapY)
+            * (
+                buttonHeight
+                + gapY
+            )
+
 
         local x2 =
             math.min(
                 WIDTH,
-                x1 + buttonWidth - 1
+                x1
+                + buttonWidth
+                - 1
             )
+
 
         local y2 =
             math.min(
                 calibrationY1 - 2,
-                y1 + buttonHeight - 1
+                y1
+                + buttonHeight
+                - 1
             )
 
 
@@ -513,10 +965,13 @@ local function drawScreen()
                 colors.white
 
 
-            if floor == currentFloor then
+            if floor ==
+                currentFloor
+            then
 
                 background =
                     colors.green
+
 
             elseif moving
                 or calibrating
@@ -530,47 +985,15 @@ local function drawScreen()
             end
 
 
-            fillArea(
+            drawButton(
                 x1,
                 y1,
                 x2,
                 y2,
-                background
-            )
-
-            monitor.setTextColor(
+                tostring(floor),
+                background,
                 foreground
             )
-
-
-            local label =
-                tostring(floor)
-
-            local actualWidth =
-                x2 - x1 + 1
-
-            local labelX =
-                x1
-                + math.floor(
-                    (
-                        actualWidth
-                        - #label
-                    ) / 2
-                )
-
-            local labelY =
-                y1
-                + math.floor(
-                    (y2 - y1) / 2
-                )
-
-
-            monitor.setCursorPos(
-                labelX,
-                labelY
-            )
-
-            monitor.write(label)
 
 
             buttons[
@@ -588,16 +1011,18 @@ local function drawScreen()
         end
 
 
-        index = index + 1
+        index =
+            index + 1
     end
 
 
     -- ========================================================
-    -- KALIBRIEREN BUTTON
+    -- KALIBRIEREN
     -- ========================================================
 
     local label =
         "KALIBRIEREN"
+
 
     local buttonWidth =
         math.min(
@@ -608,16 +1033,25 @@ local function drawScreen()
             WIDTH - 4
         )
 
+
     local x1 =
         math.floor(
-            (WIDTH - buttonWidth) / 2
+            (
+                WIDTH
+                - buttonWidth
+            ) / 2
         ) + 1
 
+
     local x2 =
-        x1 + buttonWidth - 1
+        x1
+        + buttonWidth
+        - 1
+
 
     local y1 =
         calibrationY1
+
 
     local y2 =
         calibrationY2
@@ -627,56 +1061,28 @@ local function drawScreen()
         and not calibrating
     then
 
-        fillArea(
+        drawButton(
             x1,
             y1,
             x2,
             y2,
-            colors.orange
-        )
-
-        monitor.setTextColor(
+            label,
+            colors.orange,
             colors.black
         )
 
     else
 
-        fillArea(
+        drawButton(
             x1,
             y1,
             x2,
             y2,
-            colors.gray
-        )
-
-        monitor.setTextColor(
+            label,
+            colors.gray,
             colors.lightGray
         )
     end
-
-
-    local labelX =
-        x1
-        + math.floor(
-            (
-                buttonWidth
-                - #label
-            ) / 2
-        )
-
-    local labelY =
-        y1
-        + math.floor(
-            (y2 - y1) / 2
-        )
-
-
-    monitor.setCursorPos(
-        labelX,
-        labelY
-    )
-
-    monitor.write(label)
 
 
     calibrationButton = {
@@ -700,27 +1106,53 @@ end
 
 
 -- ============================================================
--- AUF NAECHSTEN NORMALEN CONTACT WARTEN
+-- HIT TEST
+-- ============================================================
+
+local function buttonTouched(
+    button,
+    x,
+    y
+)
+
+    if not button then
+        return false
+    end
+
+
+    return
+        x >= button.x1
+        and x <= button.x2
+        and y >= button.y1
+        and y <= button.y2
+end
+
+
+-- ============================================================
+-- NAECHSTE ETAGE
 -- ============================================================
 
 local function waitForNextFloor()
 
-    -- Falls wir gerade auf einem Contact stehen:
-    -- erst verlassen.
-    while redstone.getInput(CONTACT) do
+    while redstone.getInput(
+        CONTACT
+    ) do
+
         sleep(0.05)
     end
 
 
-    -- Dann naechsten Contact erreichen.
-    while not redstone.getInput(CONTACT) do
+    while not redstone.getInput(
+        CONTACT
+    ) do
+
         sleep(0.05)
     end
 end
 
 
 -- ============================================================
--- HOMING
+-- HOME
 -- ============================================================
 
 local function home()
@@ -728,11 +1160,18 @@ local function home()
     moving = true
     targetFloor = 0
 
+
+    -- Homing mit normaler
+    -- Fahrgeschwindigkeit
+    setNormalSpeed()
+
+
     drawScreen()
 
 
-    -- Bereits auf Home?
-    if redstone.getInput(HOME) then
+    if redstone.getInput(
+        HOME
+    ) then
 
         currentFloor = 0
 
@@ -745,24 +1184,28 @@ local function home()
     end
 
 
-    -- Richtung hoch
     redstone.setOutput(
         DIRECTION,
         true
     )
 
-    -- Start
-    pulse(SEQUENCER)
+
+    pulse(
+        SEQUENCER
+    )
 
 
-    -- Auf Home warten
-    while not redstone.getInput(HOME) do
+    while not redstone.getInput(
+        HOME
+    ) do
+
         sleep(0.05)
     end
 
 
-    -- Stop
-    pulse(SEQUENCER)
+    pulse(
+        SEQUENCER
+    )
 
 
     currentFloor = 0
@@ -770,16 +1213,13 @@ local function home()
     moving = false
     targetFloor = nil
 
+
     drawScreen()
 end
 
 
 -- ============================================================
 -- KALIBRIERUNG
---
--- HOME   = ETAGE 0
--- CONTACTS DAZWISCHEN = 1, 2, 3, ...
--- BOTTOM = LETZTE ETAGE
 -- ============================================================
 
 local function calibrate()
@@ -788,33 +1228,49 @@ local function calibrate()
     moving = true
     targetFloor = nil
 
+
+    -- Kalibrierung immer 100 %
+    setCalibrationSpeed()
+
+
     drawScreen()
 
 
     -- ========================================================
-    -- 1. ZUERST HOME SUCHEN
+    -- HOME SUCHEN
     -- ========================================================
 
-    if not redstone.getInput(HOME) then
+    if not redstone.getInput(
+        HOME
+    ) then
 
         redstone.setOutput(
             DIRECTION,
             true
         )
 
-        pulse(SEQUENCER)
+
+        pulse(
+            SEQUENCER
+        )
 
 
-        while not redstone.getInput(HOME) do
+        while not redstone.getInput(
+            HOME
+        ) do
+
             sleep(0.05)
         end
 
 
-        pulse(SEQUENCER)
+        pulse(
+            SEQUENCER
+        )
     end
 
 
     currentFloor = 0
+
 
     drawScreen()
 
@@ -822,109 +1278,121 @@ local function calibrate()
 
 
     -- ========================================================
-    -- 2. VON HOME NACH UNTEN FAHREN
+    -- RUNTER
     -- ========================================================
 
     local countedFloors = 0
 
 
-    -- Richtung runter
     redstone.setOutput(
         DIRECTION,
         false
     )
 
-    -- Start
-    pulse(SEQUENCER)
+
+    pulse(
+        SEQUENCER
+    )
 
 
-    -- Home komplett verlassen
-    while redstone.getInput(HOME) do
+    while redstone.getInput(
+        HOME
+    ) do
+
         sleep(0.05)
     end
 
 
     -- ========================================================
-    -- 3. ETAGEN ZAEHLEN
+    -- ZAEHLEN
     -- ========================================================
 
     while true do
 
-        -- Warten, bis entweder
-        -- CONTACT oder BOTTOM aktiv wird.
         while
-            not redstone.getInput(CONTACT)
-            and not redstone.getInput(BOTTOM)
+            not redstone.getInput(
+                CONTACT
+            )
+            and
+            not redstone.getInput(
+                BOTTOM
+            )
         do
+
             sleep(0.05)
         end
 
 
         -- ====================================================
-        -- BOTTOM ERREICHT
+        -- BOTTOM
         -- ====================================================
 
-        if redstone.getInput(BOTTOM) then
+        if redstone.getInput(
+            BOTTOM
+        ) then
 
-            -- Bottom ist SELBST die letzte Etage.
             countedFloors =
                 countedFloors + 1
+
 
             currentFloor =
                 countedFloors
 
+
             drawScreen()
 
-            -- Fahrt stoppen
-            pulse(SEQUENCER)
+
+            pulse(
+                SEQUENCER
+            )
+
 
             break
         end
 
 
         -- ====================================================
-        -- NORMALER CONTACT ERREICHT
+        -- NORMALER CONTACT
         -- ====================================================
 
         countedFloors =
             countedFloors + 1
 
+
         currentFloor =
             countedFloors
+
 
         drawScreen()
 
 
-        -- WICHTIG:
-        -- Diesen Contact komplett verlassen,
-        -- bevor ein weiterer gezaehlt werden darf.
-        while redstone.getInput(CONTACT) do
+        while redstone.getInput(
+            CONTACT
+        ) do
 
-            -- Falls Bottom bereits waehrenddessen
-            -- erreicht wird, verlassen wir diese
-            -- Schleife.
-            if redstone.getInput(BOTTOM) then
+            if redstone.getInput(
+                BOTTOM
+            ) then
+
                 break
             end
 
+
             sleep(0.05)
         end
-
-
-        -- Falls Bottom inzwischen aktiv ist,
-        -- wird er im naechsten Schleifendurchlauf
-        -- als letzte Etage verarbeitet.
     end
 
 
     -- ========================================================
-    -- 4. ERMITTELTE ETAGENZAHL SPEICHERN
+    -- SPEICHERN
     -- ========================================================
 
     maxFloor =
         countedFloors
 
+
     saveConfig()
+
 
     drawScreen()
 
@@ -932,7 +1400,7 @@ local function calibrate()
 
 
     -- ========================================================
-    -- 5. ZURUECK ZU HOME
+    -- WIEDER NACH HOME
     -- ========================================================
 
     redstone.setOutput(
@@ -940,29 +1408,44 @@ local function calibrate()
         true
     )
 
-    pulse(SEQUENCER)
+
+    pulse(
+        SEQUENCER
+    )
 
 
-    while not redstone.getInput(HOME) do
+    while not redstone.getInput(
+        HOME
+    ) do
+
         sleep(0.05)
     end
 
 
-    pulse(SEQUENCER)
+    pulse(
+        SEQUENCER
+    )
 
 
     currentFloor = 0
 
+
+    -- Nach Kalibrierung wieder
+    -- normale Geschwindigkeit
+    setNormalSpeed()
+
+
     calibrating = false
     moving = false
     targetFloor = nil
+
 
     drawScreen()
 end
 
 
 -- ============================================================
--- ZU ETAGE FAHREN
+-- FAHRT
 -- ============================================================
 
 local function moveTo(target)
@@ -977,8 +1460,13 @@ local function moveTo(target)
     end
 
 
+    -- Gewaehlte Geschwindigkeit
+    setNormalSpeed()
+
+
     moving = true
     targetFloor = target
+
 
     drawScreen()
 
@@ -987,7 +1475,6 @@ local function moveTo(target)
         target < currentFloor
 
 
-    -- Richtung setzen
     if goingUp then
 
         redstone.setOutput(
@@ -1004,28 +1491,35 @@ local function moveTo(target)
     end
 
 
-    -- Start
-    pulse(SEQUENCER)
+    pulse(
+        SEQUENCER
+    )
 
 
     -- ========================================================
-    -- ZIEL = HOME / ETAGE 0
+    -- HOME
     -- ========================================================
 
     if target == 0 then
 
-        while not redstone.getInput(HOME) do
+        while not redstone.getInput(
+            HOME
+        ) do
+
             sleep(0.05)
         end
 
 
-        pulse(SEQUENCER)
+        pulse(
+            SEQUENCER
+        )
 
 
         currentFloor = 0
 
         moving = false
         targetFloor = nil
+
 
         drawScreen()
 
@@ -1034,27 +1528,34 @@ local function moveTo(target)
 
 
     -- ========================================================
-    -- ZIEL = UNTERSTE ETAGE
-    --
-    -- Hier benutzen wir BOTTOM als absoluten Sensor.
+    -- BOTTOM
     -- ========================================================
 
-    if target == maxFloor
+    if
+        target == maxFloor
         and not goingUp
     then
 
-        while not redstone.getInput(BOTTOM) do
+        while not redstone.getInput(
+            BOTTOM
+        ) do
 
-            -- Zwischenetagen trotzdem anzeigen
-            if redstone.getInput(CONTACT) then
+
+            if redstone.getInput(
+                CONTACT
+            ) then
 
                 currentFloor =
                     currentFloor + 1
 
+
                 drawScreen()
 
 
-                while redstone.getInput(CONTACT) do
+                while redstone.getInput(
+                    CONTACT
+                ) do
+
                     sleep(0.05)
                 end
 
@@ -1065,13 +1566,18 @@ local function moveTo(target)
         end
 
 
-        pulse(SEQUENCER)
+        pulse(
+            SEQUENCER
+        )
+
 
         currentFloor =
             maxFloor
 
+
         moving = false
         targetFloor = nil
+
 
         drawScreen()
 
@@ -1080,7 +1586,7 @@ local function moveTo(target)
 
 
     -- ========================================================
-    -- NORMALE ETAGEN
+    -- NORMALE ETAGE
     -- ========================================================
 
     while currentFloor ~= target do
@@ -1104,33 +1610,37 @@ local function moveTo(target)
     end
 
 
-    -- Ziel erreicht
-    pulse(SEQUENCER)
+    pulse(
+        SEQUENCER
+    )
 
 
     moving = false
     targetFloor = nil
+
 
     drawScreen()
 end
 
 
 -- ============================================================
--- TOUCH: ETAGE
+-- ETAGENBUTTON ERMITTELN
 -- ============================================================
 
-local function getTouchedFloor(x, y)
+local function getTouchedFloor(
+    x,
+    y
+)
 
     for _, button
         in ipairs(buttons)
     do
 
-        if
-            x >= button.x1
-            and x <= button.x2
-            and y >= button.y1
-            and y <= button.y2
-        then
+        if buttonTouched(
+            button,
+            x,
+            y
+        ) then
 
             return button.floor
         end
@@ -1142,32 +1652,52 @@ end
 
 
 -- ============================================================
--- TOUCH: KALIBRIEREN
+-- SPEED AENDERN
 -- ============================================================
 
-local function calibrationTouched(x, y)
+local function changeSpeed(amount)
 
-    if not calibrationButton then
-        return false
+    normalSpeed =
+        normalSpeed + amount
+
+
+    if normalSpeed < 50 then
+        normalSpeed = 50
     end
 
 
-    return
-        x >= calibrationButton.x1
-        and x <= calibrationButton.x2
-        and y >= calibrationButton.y1
-        and y <= calibrationButton.y2
+    if normalSpeed > 100 then
+        normalSpeed = 100
+    end
+
+
+    -- Direkt an Hardware schicken
+    setNormalSpeed()
+
+
+    -- Einstellung dauerhaft speichern
+    saveConfig()
+
+
+    drawScreen()
 end
 
 
 -- ============================================================
--- PROGRAMMSTART
+-- START
 -- ============================================================
 
 loadConfig()
 
--- Bei jedem Neustart nur Home suchen.
+
+-- Gewaehlte normale Geschwindigkeit
+-- sofort setzen
+setNormalSpeed()
+
+
+-- Referenzposition bestimmen
 home()
+
 
 drawScreen()
 
@@ -1178,7 +1708,10 @@ drawScreen()
 
 while true do
 
-    local event, side, x, y =
+    local event,
+          side,
+          x,
+          y =
         os.pullEvent(
             "monitor_touch"
         )
@@ -1188,16 +1721,57 @@ while true do
         and not calibrating
     then
 
-        -- Kalibrierung gedrueckt
-        if calibrationTouched(x, y) then
+
+        -- ====================================================
+        -- SPEED -
+        -- ====================================================
+
+        if buttonTouched(
+            speedMinusButton,
+            x,
+            y
+        ) then
+
+            changeSpeed(-5)
+
+
+        -- ====================================================
+        -- SPEED +
+        -- ====================================================
+
+        elseif buttonTouched(
+            speedPlusButton,
+            x,
+            y
+        ) then
+
+            changeSpeed(5)
+
+
+        -- ====================================================
+        -- KALIBRIEREN
+        -- ====================================================
+
+        elseif buttonTouched(
+            calibrationButton,
+            x,
+            y
+        ) then
 
             calibrate()
 
+
+        -- ====================================================
+        -- ETAGE
+        -- ====================================================
+
         else
 
-            -- Etage gedrueckt
             local selectedFloor =
-                getTouchedFloor(x, y)
+                getTouchedFloor(
+                    x,
+                    y
+                )
 
 
             if
