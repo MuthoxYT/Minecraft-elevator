@@ -14,7 +14,7 @@ local BOTTOM    = "bottom"
 local NETWORK_SIDE = "front"
 
 -- SPEED
-local SPEED_RELAY_NAME = "redstone_relay_1"
+local SPEED_RELAY_NAME = "redstone_relay_2"
 local SPEED_SIDE = "right"
 
 -- NETWORK
